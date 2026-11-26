@@ -12,8 +12,8 @@
 
 ## 当前状态
 
-源码尚未成功编译、安装或实机验证，不是可用成品。
-2026-11-26 的构建停在 SDKROOT 未设置；本机无工具链和 SDK，目录内所有可选工具链均要求设备缺少的 FEAT_LRCPC。
+2026-11-26，GitHub Actions 第 3 轮构建（提交 2df5f23）已成功编译、签名并打包 roothide 和 rootless 两个目标，产物已上传。运行地址：https://github.com/xvklove2026/SideStoreAutoRenew/actions/runs/45829062567 。尚未安装或实机验证，免 LocalDevVPN 续签仍属实验功能。
+本机先前构建停在 SDKROOT 未设置；本机无工具链和 SDK，目录内所有可选工具链均要求设备缺少的 FEAT_LRCPC，因此改用云端构建。
 不要绕过 CPU 检查，也不要把主机二进制能构建等同于行为已验证。
 
 ## 兼容性依据与待验证项
