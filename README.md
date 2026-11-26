@@ -62,6 +62,14 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 
 当前新增限量读写诊断：仅观察成功转发的 socket，每连接最多记录前八次 read/write/recv/send 及向量调用，另记录 close；包含连接编号、操作、返回字节数和 errno，不读取或输出请求正文、配对信息或 TLS 内容。调用保持原结果和 errno，并有线程递归保护。诊断本身不是续签修复，需新版安装后确定首次失败操作。
 
+## 保留本机接口地址（2026-11-27，待安装实测）
+
+第 15 次构建 12c86c7 已安装：心跳连接先发送 4 与 329 字节，接收返回 0，随后发送 4 与 419 字节，接收仍为 0，最终 early eof。旧诊断未记录请求接收长度，单凭该日志不足以确定对端关闭原因。
+
+独立进程以相同的四字节大端长度头和只读 GetValue / ProductVersion 请求对照：回环 62078 的读取报 Connection reset by peer；应用现有设备地址 62078 返回四字节响应头 00 00 01 48。该对照提示强制回环改写是当前失败的候选原因，尚未验证 SpringBoard 及 SideStore 的完整会话。
+
+协议升级为 SRA3，传递运行时配置的设备地址；SpringBoard 仅允许当前已启用本机 IPv4 接口地址，保留端口和对端进程校验，在原 socket 上连接该地址。客户端校验实际端点与请求一致。不将测试地址硬编码进源码。安装后需重启 SpringBoard 并重启 SideStore，核对两端协议、新构建标记、心跳、Minimuxer 及签名有效期。
+
 ## 构建和安装
 
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
