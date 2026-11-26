@@ -16,6 +16,11 @@ static id SRAHandler;
 static NSTimer *SRATimer;
 static uint64_t SRAActiveRequest;
 
+static BOOL SRAIsSideStoreProcess(void) {
+    // Match the executable selected by our injection filter, independent of signing ID.
+    return [[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleExecutable"] isEqualToString:@"SideStore"];
+}
+
 static void SRAReport(SRAStatus status) {
     notify_set_state(SRAStatusToken, status);
     notify_post(SRA_STATUS);
@@ -72,12 +77,19 @@ static void SRAHandleRequest(void) {
             // ready/inProgress: retain until a terminal response or timeout.
         });
     };
+    // Confirmation callbacks can arrive more than once; dispatch handle only once.
+    __block BOOL handleDispatched = NO;
     SRAProbeDirectConnection(^(BOOL reachable) {
         if (!SRABusy || SRAActiveRequest != request) return;
         if (!reachable) { SRAFinish(SRAStatusDirectUnavailable); return; }
         ((void (*)(id, SEL, id, id))objc_msgSend)(handler, confirm, intent, ^(id response) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (!SRABusy || SRAActiveRequest != request) return;
+                if (!SRABusy || SRAActiveRequest != request || handleDispatched) return;
+                handleDispatched = YES;
+                SEL codeSelector = NSSelectorFromString(@"code");
+                if (![response respondsToSelector:codeSelector]) { SRAFinish(SRAStatusUnconfirmed); return; }
+                NSInteger code = ((NSInteger (*)(id, SEL))objc_msgSend)(response, codeSelector);
+                if (code >= 5) { SRAFinish(SRAStatusFailure); return; }
                 ((void (*)(id, SEL, id, id))objc_msgSend)(handler, handle, intent, handled);
             });
         });
@@ -99,7 +111,8 @@ static BOOL SRAIsLocked(void) {
 static void SRAStartRequest(NSDate *slot) {
     if (SRAStarted && -SRAStarted.timeIntervalSinceNow < 240) return;
     if (SRAIsLocked()) {
-        SRAWrite(@"lastStatus", @(SRAStatusLocked));
+        if ([SRARead(@"lastStatus", @0) unsignedLongLongValue] != SRAStatusLocked)
+            SRAWrite(@"lastStatus", @(SRAStatusLocked));
         return;
     }
     uint64_t request = (uint64_t)(NSDate.date.timeIntervalSince1970 * 1000);
@@ -142,7 +155,7 @@ static void SRATick(void) {
 __attribute__((constructor)) static void SRAInitialize(void) {
     SRABackground = UIBackgroundTaskInvalid;
     @autoreleasepool {
-        if ([NSBundle.mainBundle.bundleIdentifier hasPrefix:@"com.SideStore.SideStore"])
+        if (SRAIsSideStoreProcess())
             SRAInstallDirectConnection();
     }
     os_log(SRALog(), "ApelinLoaded %{public}s", APELIN_BUILD_ID);
@@ -160,10 +173,11 @@ __attribute__((constructor)) static void SRAInitialize(void) {
             notify_register_dispatch(SRA_CHANGED, &changedToken, dispatch_get_main_queue(), ^(int token) { SRATick(); });
             notify_register_dispatch(SRA_MANUAL, &manualToken, dispatch_get_main_queue(), ^(int token) { SRAStartRequest(nil); });
             SRATimer = [NSTimer scheduledTimerWithTimeInterval:20 repeats:YES block:^(NSTimer *timer) { SRATick(); }];
+            SRATimer.tolerance = 2;
             [NSRunLoop.mainRunLoop addTimer:SRATimer forMode:NSRunLoopCommonModes];
             [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationSignificantTimeChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { SRATick(); }];
             SRATick();
-        } else if ([bundle hasPrefix:@"com.SideStore.SideStore"]) {
+        } else if (SRAIsSideStoreProcess()) {
             notify_register_check(SRA_STATUS, &SRAStatusToken);
             // Observe the same signal with a separate token: keep the state token.
             static int listenerToken;
