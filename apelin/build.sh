@@ -15,7 +15,7 @@ sra_clang() {
 stage="$(mktemp -d "${TMPDIR:?}sra-stage.XXXXXX")"
 trap 'rm -rf -- "${stage:?}"' EXIT
 case "$APELIN_BOOTSTRAP" in
-  roothide) arches="arm64e"; bootstrap_define="APELIN_BOOTSTRAP_ROOTHIDE" ;;
+  roothide) arches="arm64 arm64e"; bootstrap_define="APELIN_BOOTSTRAP_ROOTHIDE" ;;
   rootless) arches="arm64 arm64e"; bootstrap_define="APELIN_BOOTSTRAP_ROOTLESS" ;;
   *) echo 'Unsupported bootstrap' >&2; exit 1 ;;
 esac
@@ -30,13 +30,12 @@ for arch in $arches; do
 done
 tweak="$stage$APELIN_PREFIX/Library/MobileSubstrate/DynamicLibraries/SRAAutoRenew.dylib"
 prefs="$stage$APELIN_PREFIX/Library/PreferenceBundles/SRAPreferences.bundle"
-if [ "$APELIN_BOOTSTRAP" = roothide ]; then
-  cp "$stage/slices/tweak-arm64e.dylib" "${tweak:?}"
-  cp "$stage/slices/preferences-arm64e" "${prefs:?}/SRAPreferences"
-else
-  lipo -create "$stage/slices/tweak-arm64.dylib" "$stage/slices/tweak-arm64e.dylib" -output "$tweak"
-  lipo -create "$stage/slices/preferences-arm64" "$stage/slices/preferences-arm64e" -output "$prefs/SRAPreferences"
-fi
+# Package architecture identifies the bootstrap, not the CPU slices of the hosts.
+# A11 devices require arm64 even when the roothide package is iphoneos-arm64e.
+lipo -create "$stage/slices/tweak-arm64.dylib" "$stage/slices/tweak-arm64e.dylib" -output "$tweak"
+lipo -create "$stage/slices/preferences-arm64" "$stage/slices/preferences-arm64e" -output "$prefs/SRAPreferences"
+lipo -verify_arch arm64 arm64e "$tweak"
+lipo -verify_arch arm64 arm64e "$prefs/SRAPreferences"
 ldid -S "$tweak"
 ldid -S "$prefs/SRAPreferences"
 cp Preferences/Info.plist "${prefs:?}/Info.plist"
@@ -49,7 +48,7 @@ PLIST
 cat > "$stage/DEBIAN/control" <<CONTROL
 Package: local.apelin.sidestore.autorenew
 Name: SideStore Auto Renew
-Version: 0.1.0
+Version: 0.1.1
 Architecture: $APELIN_ARCHITECTURE
 Description: Schedule SideStore refresh with selectable weekdays and local time.
 Maintainer: SideStore Auto Renew Project
