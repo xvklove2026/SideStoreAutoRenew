@@ -12,7 +12,9 @@
 
 ## 当前状态
 
-2026-11-26，GitHub Actions 第 3 轮构建（提交 2df5f23）已成功编译、签名并打包 roothide 和 rootless 两个目标，产物已上传。运行地址：https://github.com/xvklove2026/SideStoreAutoRenew/actions/runs/45829062567 。尚未安装或实机验证，免 LocalDevVPN 续签仍属实验功能。
+2026-11-26，0.1.1 的双架构云构建已成功，更新后设置页可正常打开，手动请求可唤起 SideStore，但应用内回环 TCP 探测失败，未进入续签。SideStore 健康检查显示 Minimuxer 未启动、配对文件已加载但连接断开，配置为 Remote Server / 127.0.0.1 / Lockdown。设备外部对回环与设备自身 Wi-Fi 地址的 62078 端口探测均成功，这不证明应用沙盒内连接成功。
+
+0.1.2 尝试在连接配置初始化前选择本机 en0 IPv4 地址，无 Wi-Fi 时保留回环；配置与探测使用同一地址，网络地址变更时要求重启 SideStore，并记录 TCP errno（不记录 IP 或配对数据）。新版仍需安装后验证应用内可达性、Minimuxer 启动、配对及实际签名有效期，尚未证明免 LocalDevVPN 续签成功。
 本机先前构建停在 SDKROOT 未设置；本机无工具链和 SDK，目录内所有可选工具链均要求设备缺少的 FEAT_LRCPC，因此改用云端构建。
 不要绕过 CPU 检查，也不要把主机二进制能构建等同于行为已验证。
 
@@ -30,13 +32,13 @@ SideStore 可能提前返回成功；当前显示“SideStore 返回成功，请
 打开 URL 不等于续签完成，未收到响应会标记未确认。未知的 sra-refresh host 仅用于拉起应用，实际刷新依赖插件收到通知。
 必须验证 SpringBoard 的 openURL 行为、锁屏判断、跨沙盒 Darwin 通知状态，以及 roothide 对 SideStore 的插件注入是否生效。
 在不支持注入的设备上，本插件不运行。关机、退出越狱、系统深度休眠时不保证准点，解锁补执行需要实机验证。
-账号、配对文件与网络仍依赖 SideStore 自己的配置。新增实验性本机直连：Sources/SRADirect.m 在 SideStore 内 Hook 标准 UserDefaults 的 useLocalVPN 和 RemoteServerIp 读取，选择非 VPN 连接模式及 127.0.0.1，不持久化覆盖原设置。续签前从 SideStore 自身异步检测 127.0.0.1:62078；保留后端真实配对和可达性检查。shell 中已探测到该端口可连，但 SideStore 沙盒内 TCP、连接配置初始化时机和实际配对尚待验证，不能据此宣称免 LocalDevVPN 续签已成功。
+账号、配对文件与网络仍依赖 SideStore 自己的配置。实验性本机直连：Sources/SRADirect.m 在 SideStore 内 Hook 标准 UserDefaults 的 useLocalVPN 和 RemoteServerIp 读取，选择非 VPN 模式及启动时发现的本机 Wi-Fi IPv4 地址（无 Wi-Fi 时使用回环），不持久化覆盖原设置。续签前从 SideStore 自身异步检测相同地址的 62078 端口；保留后端真实配对和可达性检查。shell 中端口可连不代表 SideStore 沙盒内可达；新版应用内 TCP、Minimuxer 启动和实际配对仍需安装验证。
 
 ## 构建和安装
 
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
 编译需注册的兼容工具链与 SDK，脚本使用构建提供的 SDKROOT、APELIN_* 变量，不持久化 bootstrap 实际路径。
-roothide 编译 arm64e；rootless 编译 arm64 与 arm64e 后合并；设置 bundle 通过 Vendor 的最小 Preferences 声明链接。
+roothide 与 rootless 均编译 arm64 与 arm64e 后合并，并在签名前校验两种切片；设置 bundle 通过 Vendor 的最小 Preferences 声明链接。
 包内安装 tweak、过滤器和 PreferenceLoader 设置入口，依赖 mobilesubstrate、preferenceloader。
 临时包标识 local.apelin.sidestore.autorenew，首次安装前必须由用户确定保留或替换，并同步所有源码与配置。
 
