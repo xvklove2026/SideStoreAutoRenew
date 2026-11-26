@@ -18,6 +18,7 @@
 #import <netinet/tcp.h>
 #import <string.h>
 #import <stdio.h>
+#import <os/lock.h>
 
 // Mirror coarse diagnostics to the host's existing stderr capture, not a file.
 // Socket hooks must not change errno merely by reporting a result.
@@ -30,6 +31,83 @@ static void SRAConsoleRelay(int fd, uint16_t port, int nonblocking, const char *
 
 extern void MSHookFunction(void *, void *, void **);
 static int (*SRAOriginalConnect)(int, const struct sockaddr *, socklen_t);
+// Observe only successful relay sockets, at most eight operations per connection.
+// Never inspect or retain payloads (pairing and TLS data may be present).
+static ssize_t (*SRAOriginalRead)(int, void *, size_t);
+static ssize_t (*SRAOriginalWrite)(int, const void *, size_t);
+static ssize_t (*SRAOriginalRecv)(int, void *, size_t, int);
+static ssize_t (*SRAOriginalSend)(int, const void *, size_t, int);
+static ssize_t (*SRAOriginalReadv)(int, const struct iovec *, int);
+static ssize_t (*SRAOriginalWritev)(int, const struct iovec *, int);
+static ssize_t (*SRAOriginalRecvmsg)(int, struct msghdr *, int);
+static ssize_t (*SRAOriginalSendmsg)(int, const struct msghdr *, int);
+static int (*SRAOriginalClose)(int);
+typedef struct { int fd; uint16_t port; unsigned sequence; uint64_t identifier; } SRAObservedSocket;
+static SRAObservedSocket SRAObserved[64];
+static os_unfair_lock SRAObservedLock = OS_UNFAIR_LOCK_INIT;
+static uint64_t SRANextIdentifier;
+static __thread BOOL SRAInsideIO;
+static void SRAObserveSocket(int fd, uint16_t port) {
+    os_unfair_lock_lock(&SRAObservedLock);
+    size_t slot = 64;
+    for (size_t i = 0; i < 64; i++) {
+        if (SRAObserved[i].identifier && SRAObserved[i].fd == fd) { slot = i; break; }
+        if (!SRAObserved[i].identifier && slot == 64) slot = i;
+    }
+    if (slot < 64) SRAObserved[slot] = (SRAObservedSocket){ fd, port, 0, ++SRANextIdentifier };
+    os_unfair_lock_unlock(&SRAObservedLock);
+}
+static SRAObservedSocket SRAObserveBegin(int fd, BOOL closing) {
+    SRAObservedSocket snapshot = {0};
+    os_unfair_lock_lock(&SRAObservedLock);
+    for (size_t i = 0; i < 64; i++) {
+        if (SRAObserved[i].identifier && SRAObserved[i].fd == fd) {
+            if (closing || SRAObserved[i].sequence < 8) {
+                snapshot = SRAObserved[i];
+                snapshot.sequence = ++SRAObserved[i].sequence;
+            }
+            if (closing) SRAObserved[i].identifier = 0;
+            break;
+        }
+    }
+    os_unfair_lock_unlock(&SRAObservedLock);
+    return snapshot;
+}
+static void SRAObserveResult(SRAObservedSocket socket, const char *operation, ssize_t result, int error) {
+    if (!socket.identifier) return;
+    int saved = errno;
+    os_log(SRALog(), "Relay IO id=%llu fd=%d port=%u seq=%u op=%{public}s result=%lld errno=%d build=%{public}s",
+           (unsigned long long)socket.identifier, socket.fd, (unsigned)socket.port, socket.sequence,
+           operation, (long long)result, error, APELIN_BUILD_ID);
+    fprintf(stderr, "[SRA io] id=%llu fd=%d port=%u seq=%u op=%s result=%lld errno=%d build=%s\n",
+            (unsigned long long)socket.identifier, socket.fd, (unsigned)socket.port, socket.sequence,
+            operation, (long long)result, error, APELIN_BUILD_ID);
+    errno = saved;
+}
+#define SRA_IO_BODY(OP, CALL) \
+    if (SRAInsideIO) return (CALL); \
+    int incoming = errno; SRAInsideIO = YES; \
+    SRAObservedSocket observed = SRAObserveBegin(fd, NO); errno = incoming; \
+    ssize_t result = (CALL); int saved = errno; \
+    SRAObserveResult(observed, OP, result, result < 0 ? saved : 0); \
+    SRAInsideIO = NO; errno = saved; return result;
+static ssize_t SRARead(int fd, void *buffer, size_t length) { SRA_IO_BODY("read", SRAOriginalRead(fd, buffer, length)) }
+static ssize_t SRAWrite(int fd, const void *buffer, size_t length) { SRA_IO_BODY("write", SRAOriginalWrite(fd, buffer, length)) }
+static ssize_t SRARecv(int fd, void *buffer, size_t length, int flags) { SRA_IO_BODY("recv", SRAOriginalRecv(fd, buffer, length, flags)) }
+static ssize_t SRASend(int fd, const void *buffer, size_t length, int flags) { SRA_IO_BODY("send", SRAOriginalSend(fd, buffer, length, flags)) }
+static ssize_t SRAReadv(int fd, const struct iovec *vectors, int count) { SRA_IO_BODY("readv", SRAOriginalReadv(fd, vectors, count)) }
+static ssize_t SRAWritev(int fd, const struct iovec *vectors, int count) { SRA_IO_BODY("writev", SRAOriginalWritev(fd, vectors, count)) }
+static ssize_t SRARecvmsg(int fd, struct msghdr *message, int flags) { SRA_IO_BODY("recvmsg", SRAOriginalRecvmsg(fd, message, flags)) }
+static ssize_t SRASendmsg(int fd, const struct msghdr *message, int flags) { SRA_IO_BODY("sendmsg", SRAOriginalSendmsg(fd, message, flags)) }
+#undef SRA_IO_BODY
+static int SRAClose(int fd) {
+    if (SRAInsideIO) return SRAOriginalClose(fd);
+    int incoming = errno; SRAInsideIO = YES;
+    SRAObservedSocket observed = SRAObserveBegin(fd, YES); errno = incoming;
+    int result = SRAOriginalClose(fd); int saved = errno;
+    SRAObserveResult(observed, "close", result, result < 0 ? saved : 0);
+    SRAInsideIO = NO; errno = saved; return result;
+}
 static in_addr_t SRARelayHost;
 static NSString *SRAClientPath;
 static NSString *SRAServerPath;
@@ -284,7 +362,10 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
                  connected.sin_port != target->sin_port) error = EPROTO;
         if (!error && fcntl(fd, F_GETFL, 0) != flags) error = EIO;
         if (!error && fcntl(fd, F_GETFD, 0) != descriptorFlags) error = EIO;
-        if (!error) stage = "connected-original";
+        if (!error) {
+            SRAObserveSocket(fd, ntohs(target->sin_port));
+            stage = "connected-original";
+        }
     }
     os_log(SRALog(), "Local relay connect fd=%d port=%u nonblocking=%d stage=%{public}s errno=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error, APELIN_BUILD_ID);
     SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error);
@@ -297,6 +378,21 @@ void SRAInstallRelayClient(NSString *host) {
     SRAClientPath = SRASocketPath(NSHomeDirectory());
     if (!SRAClientPath) { os_log_error(SRALog(), "Local relay container path unavailable"); return; }
     SRARelayHost = address.s_addr;
+    // Install observers before connect can register a socket for observation.
+#define SRA_INSTALL_IO(NAME, HOOK, ORIGINAL) do { \
+    void *entry = dlsym(RTLD_DEFAULT, NAME); \
+    if (entry) MSHookFunction(entry, (void *)HOOK, (void **)&ORIGINAL); \
+} while (0)
+    SRA_INSTALL_IO("read", SRARead, SRAOriginalRead);
+    SRA_INSTALL_IO("write", SRAWrite, SRAOriginalWrite);
+    SRA_INSTALL_IO("recv", SRARecv, SRAOriginalRecv);
+    SRA_INSTALL_IO("send", SRASend, SRAOriginalSend);
+    SRA_INSTALL_IO("readv", SRAReadv, SRAOriginalReadv);
+    SRA_INSTALL_IO("writev", SRAWritev, SRAOriginalWritev);
+    SRA_INSTALL_IO("recvmsg", SRARecvmsg, SRAOriginalRecvmsg);
+    SRA_INSTALL_IO("sendmsg", SRASendmsg, SRAOriginalSendmsg);
+    SRA_INSTALL_IO("close", SRAClose, SRAOriginalClose);
+#undef SRA_INSTALL_IO
     void *symbol = dlsym(RTLD_DEFAULT, "connect");
     if (symbol) MSHookFunction(symbol, (void *)SRARelayConnect, (void **)&SRAOriginalConnect);
     // The host starts capturing stderr after constructors have completed.
