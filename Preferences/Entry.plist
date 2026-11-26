@@ -6,4 +6,5 @@
 <key>cell</key><string>PSLinkCell</string>
 <key>isController</key><true/>
 <key>label</key><string>SideStore 自动续签</string>
+<key>icon</key><string>icon.png</string>
 </dict></dict></plist>

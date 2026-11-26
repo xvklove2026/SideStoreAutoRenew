@@ -40,6 +40,9 @@ ldid -S "$tweak"
 ldid -S "$prefs/SRAPreferences"
 cp Preferences/Info.plist "${prefs:?}/Info.plist"
 cp Preferences/Root.plist "${prefs:?}/Root.plist"
+for icon in icon.png icon@2x.png icon@3x.png; do
+  cp "Preferences/$icon" "${prefs:?}/$icon"
+done
 cp Preferences/Entry.plist "${stage:?}$APELIN_PREFIX/Library/PreferenceLoader/Preferences/SRAAutoRenew.plist"
 cat > "$stage$APELIN_PREFIX/Library/MobileSubstrate/DynamicLibraries/SRAAutoRenew.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
