@@ -20,6 +20,28 @@ typedef NS_ENUM(uint64_t, SRAStatus) {
     SRAStatusUnsupported, SRAStatusLocked, SRAStatusOpenFailed,
     SRAStatusDirectUnavailable
 };
+// Diagnostic wire format: stage in the high 32 bits, errno in the low 32.
+// Legacy builds sent errno alone, which decodes to the unknown stage.
+typedef NS_ENUM(uint32_t, SRAConnectionStage) {
+    SRAConnectionStageUnknown = 0,
+    SRAConnectionStageAddress,
+    SRAConnectionStageSocket,
+    SRAConnectionStageFlags,
+    SRAConnectionStageConnect,
+    SRAConnectionStagePoll,
+    SRAConnectionStageSocketError
+};
+static inline NSString *SRAConnectionStageText(uint32_t stage) {
+    switch (stage) {
+        case SRAConnectionStageAddress: return @"检查本机地址";
+        case SRAConnectionStageSocket: return @"创建 TCP socket";
+        case SRAConnectionStageFlags: return @"设置非阻塞模式";
+        case SRAConnectionStageConnect: return @"发起 TCP connect";
+        case SRAConnectionStagePoll: return @"等待连接完成";
+        case SRAConnectionStageSocketError: return @"读取连接结果 SO_ERROR";
+        default: return @"未知（旧版诊断）";
+    }
+}
 static inline os_log_t SRALog(void) {
     static os_log_t log; static dispatch_once_t once;
     dispatch_once(&once, ^{ log = os_log_create(SRA_DOMAIN, "AutoRenew"); });

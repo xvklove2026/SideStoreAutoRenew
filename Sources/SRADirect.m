@@ -71,23 +71,26 @@ void SRAInstallDirectConnection(void) {
                ![SRADirectHost isEqualToString:@"127.0.0.1"]);
     });
 }
-void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error)) {
+void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error, uint32_t stage)) {
     // Probe from the SideStore process, not SpringBoard or a privileged helper.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         BOOL reachable = NO;
         int failure = 0;
+        uint32_t stage = SRAConnectionStageAddress;
         NSString *host = SRADirectHost ?: @"127.0.0.1";
         NSString *current = SRALocalWiFiAddress() ?: @"127.0.0.1";
         // ConnectionConfig caches its address. Never probe a different address
         // and then claim that the backend's cached connection is usable.
         if (![current isEqualToString:host]) {
             os_log_error(SRALog(), "Local interface changed; relaunch SideStore before retrying");
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, EADDRNOTAVAIL); });
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, EADDRNOTAVAIL, SRAConnectionStageAddress); });
             return;
         }
+        stage = SRAConnectionStageSocket;
         int fd = socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0) failure = errno;
         else {
+            stage = SRAConnectionStageFlags;
             int flags = fcntl(fd, F_GETFL, 0);
             if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) failure = errno;
             else {
@@ -95,18 +98,22 @@ void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error)) {
                 address.sin_len = sizeof(address);
                 address.sin_family = AF_INET;
                 address.sin_port = htons(62078);
+                stage = SRAConnectionStageAddress;
                 if (inet_pton(AF_INET, host.UTF8String, &address.sin_addr) != 1) failure = EINVAL;
                 else {
+                    stage = SRAConnectionStageConnect;
                     int result = connect(fd, (struct sockaddr *)&address, sizeof(address));
                     if (result == 0) reachable = YES;
                     else if (errno != EINPROGRESS) failure = errno;
                     else {
+                        stage = SRAConnectionStagePoll;
                         struct pollfd descriptor = {.fd = fd, .events = POLLOUT};
                         int ready;
                         do { ready = poll(&descriptor, 1, 2000); } while (ready < 0 && errno == EINTR);
                         if (ready < 0) failure = errno;
                         else if (ready == 0) failure = ETIMEDOUT;
                         else {
+                            stage = SRAConnectionStageSocketError;
                             int error = 0;
                             socklen_t length = sizeof(error);
                             if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) != 0) failure = errno;
@@ -121,8 +128,8 @@ void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error)) {
             }
             close(fd);
         }
-        os_log(SRALog(), "Local TCP probe wifi=%d reachable=%d errno=%d build=%{public}s",
-               ![host isEqualToString:@"127.0.0.1"], reachable, failure, APELIN_BUILD_ID);
-        dispatch_async(dispatch_get_main_queue(), ^{ completion(reachable, failure); });
+        os_log(SRALog(), "Local TCP probe wifi=%d reachable=%d errno=%d stage=%u build=%{public}s",
+               ![host isEqualToString:@"127.0.0.1"], reachable, failure, stage, APELIN_BUILD_ID);
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(reachable, failure, reachable ? SRAConnectionStageUnknown : stage); });
     });
 }

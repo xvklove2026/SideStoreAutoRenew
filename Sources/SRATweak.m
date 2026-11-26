@@ -79,10 +79,11 @@ static void SRAHandleRequest(void) {
     };
     // Confirmation callbacks can arrive more than once; dispatch handle only once.
     __block BOOL handleDispatched = NO;
-    SRAProbeDirectConnection(^(BOOL reachable, int error) {
+    SRAProbeDirectConnection(^(BOOL reachable, int error, uint32_t stage) {
         if (!SRABusy || SRAActiveRequest != request) return;
         // Publish before the terminal status; SpringBoard reads both together.
-        notify_set_state(SRADiagnosticToken, (uint64_t)MAX(error, 0));
+        uint64_t diagnostic = ((uint64_t)stage << 32) | (uint32_t)MAX(error, 0);
+        notify_set_state(SRADiagnosticToken, diagnostic);
         if (!reachable) { SRAFinish(SRAStatusDirectUnavailable); return; }
         ((void (*)(id, SEL, id, id))objc_msgSend)(handler, confirm, intent, ^(id response) {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -121,6 +122,7 @@ static void SRAStartRequest(NSDate *slot) {
     SRAStarted = NSDate.date;
     SRAWrite(@"lastStatus", @(SRAStatusRequested));
     SRAWrite(@"lastConnectionError", nil);
+    SRAWrite(@"lastConnectionStage", nil);
     notify_set_state(SRADiagnosticToken, 0);
     SRAWrite(@"lastAttempt", @(NSDate.date.timeIntervalSince1970));
     if (slot) SRAWrite(@"lastSlot", @(slot.timeIntervalSince1970));
@@ -172,8 +174,9 @@ __attribute__((constructor)) static void SRAInitialize(void) {
             notify_register_dispatch(SRA_STATUS, &SRAStatusToken, dispatch_get_main_queue(), ^(int token) {
                 uint64_t status = 0; notify_get_state(token, &status);
                 if (status == SRAStatusDirectUnavailable) {
-                    uint64_t error = 0; notify_get_state(SRADiagnosticToken, &error);
-                    SRAWrite(@"lastConnectionError", @(error));
+                    uint64_t diagnostic = 0; notify_get_state(SRADiagnosticToken, &diagnostic);
+                    SRAWrite(@"lastConnectionError", @((uint32_t)diagnostic));
+                    SRAWrite(@"lastConnectionStage", @((uint32_t)(diagnostic >> 32)));
                 }
                 SRAWrite(@"lastStatus", @(status));
                 SRAWrite(@"lastResponse", @(NSDate.date.timeIntervalSince1970));

@@ -80,11 +80,12 @@
         if (storedError) {
             int error = storedError.intValue;
             NSString *hint = @"请保留此错误码以便进一步诊断";
-            if (error == EPERM || error == EACCES) hint = @"访问被拒绝，请检查 SideStore 的本地网络权限";
+            if (error == EPERM || error == EACCES) hint = @"访问被系统拒绝；本地网络已开启时需继续检查应用网络限制";
             else if (error == ETIMEDOUT) hint = @"连接超时，尚未确认设备服务可达";
             else if (error == ECONNREFUSED) hint = @"目标端口拒绝连接";
             else if (error == EADDRNOTAVAIL) hint = @"网络地址已变化，请完全退出后重开 SideStore";
-            statusText = [statusText stringByAppendingFormat:@"\n连接诊断 errno=%d (%s)\n%@", error, strerror(error), hint];
+            uint32_t stage = [SRARead(@"lastConnectionStage", @0) unsignedIntValue];
+            statusText = [statusText stringByAppendingFormat:@"\n连接诊断 errno=%d (%s)\n失败阶段：%@\n%@", error, strerror(error), SRAConnectionStageText(stage), hint];
         }
     }
     [status setProperty:statusText forKey:@"footerText"];
