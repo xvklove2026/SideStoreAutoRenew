@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>items</key><array>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>SideStore 自动续签</string><key>footerText</key><string>按本地时间执行。可选择多个星期；未选任何一天时不执行。需要越狱及插件注入保持生效。锁屏时延后到解锁，24 小时内补一次；关机和非越狱状态不运行。</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>启用自动续签</string><key>key</key><string>enabled</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>执行时间  09:00</string><key>id</key><string>time</string><key>action</key><string>showTimePicker</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>重复星期（可多选）</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>星期一</string><key>key</key><string>weekday1</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>星期二</string><key>key</key><string>weekday2</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>星期三</string><key>key</key><string>weekday3</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>星期四</string><key>key</key><string>weekday4</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>星期五</string><key>key</key><string>weekday5</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>星期六</string><key>key</key><string>weekday6</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>星期日</string><key>key</key><string>weekday7</string><key>default</key><false/><key>defaults</key><string>local.apelin.sidestore.autorenew</string><key>PostNotification</key><string>local.apelin.sidestore.autorenew/changed</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>下次计划执行</string><key>id</key><string>next</string><key>footerText</key><string>未启用或未选择星期</string></dict>
+<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>立即续签一次</string><key>action</key><string>runNow</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>最近执行状态</string><key>id</key><string>status</string><key>footerText</key><string>尚无执行记录</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>点击右上角刷新查看最新状态。调用的是 SideStore 自己的刷新全部：插件尝试本机直连，无需启动 LocalDevVPN；账号和配对文件仍由 SideStore 管理。直连兼容性待实测。返回成功不代表已核对签名有效期，请在 SideStore 的我的应用中确认。失败后本轮不自动重复，请手动检查后重试。</string></dict>
+</array></dict></plist>

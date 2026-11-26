@@ -1,0 +1,60 @@
+name: Build SideStore Auto Renew
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.bootstrap }}
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        bootstrap: [roothide, rootless]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install signing and packaging tools
+        run: brew install ldid dpkg
+      - name: Compile, sign and package
+        shell: bash
+        env:
+          SRA_BOOTSTRAP: ${{ matrix.bootstrap }}
+        run: |
+          set -euo pipefail
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export APELIN_PROJECT_ROOT="$GITHUB_WORKSPACE"
+          export APELIN_PACKAGE_DIR="$RUNNER_TEMP/sra-packages-$SRA_BOOTSTRAP"
+          export APELIN_BUILD_ID="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export APELIN_BOOTSTRAP="$SRA_BOOTSTRAP"
+          export APELIN_CONFIGURATION=release
+          export TMPDIR="$RUNNER_TEMP/"
+          if [[ "$SRA_BOOTSTRAP" == roothide ]]; then
+            export APELIN_ARCHITECTURE=iphoneos-arm64e
+            export APELIN_PREFIX=""
+          else
+            export APELIN_ARCHITECTURE=iphoneos-arm64
+            export APELIN_PREFIX=/var/jb
+          fi
+          mkdir -p "$APELIN_PACKAGE_DIR"
+          sh -n apelin/build.sh
+          plutil -lint Preferences/Info.plist Preferences/Root.plist Preferences/Entry.plist
+          sh apelin/build.sh
+          for package in "$APELIN_PACKAGE_DIR"/*.deb; do
+            dpkg-deb --info "$package"
+            dpkg-deb --contents "$package"
+            shasum -a 256 "$package" > "$package.sha256"
+          done
+      - name: Upload installation package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: SideStoreAutoRenew-${{ matrix.bootstrap }}
+          path: ${{ runner.temp }}/sra-packages-${{ matrix.bootstrap }}/*
+          if-no-files-found: error
+          retention-days: 14

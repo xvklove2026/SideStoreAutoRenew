@@ -1,0 +1,75 @@
+#pragma once
+#import <Foundation/Foundation.h>
+#import <notify.h>
+#import <os/log.h>
+
+#define SRA_DOMAIN "local.apelin.sidestore.autorenew"
+#define SRA_REQUEST SRA_DOMAIN "/request"
+#define SRA_STATUS SRA_DOMAIN "/status"
+#define SRA_CHANGED SRA_DOMAIN "/changed"
+#define SRA_MANUAL SRA_DOMAIN "/manual"
+#ifndef APELIN_BUILD_ID
+#define APELIN_BUILD_ID "unbuilt"
+#endif
+
+// notify state conveys a request timestamp or a coarse status, never secrets.
+typedef NS_ENUM(uint64_t, SRAStatus) {
+    SRAStatusIdle = 0, SRAStatusRequested, SRAStatusRunning,
+    SRAStatusResponseSuccess, SRAStatusFailure, SRAStatusUnconfirmed,
+    SRAStatusUnsupported, SRAStatusLocked, SRAStatusOpenFailed,
+    SRAStatusDirectUnavailable
+};
+static inline os_log_t SRALog(void) {
+    static os_log_t log; static dispatch_once_t once;
+    dispatch_once(&once, ^{ log = os_log_create(SRA_DOMAIN, "AutoRenew"); });
+    return log;
+}
+static inline id SRARead(NSString *key, id fallback) {
+    id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR(SRA_DOMAIN)));
+    return value ?: fallback;
+}
+static inline void SRAWrite(NSString *key, id value) {
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, CFSTR(SRA_DOMAIN));
+    CFPreferencesAppSynchronize(CFSTR(SRA_DOMAIN));
+}
+static inline NSCalendar *SRACalendar(void) {
+    NSCalendar *calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    calendar.timeZone = NSTimeZone.localTimeZone;
+    return calendar;
+}
+// Monday=1 ... Sunday=7, independent of the calendar's first weekday.
+static inline NSInteger SRAWeekday(NSCalendar *calendar, NSDate *date) {
+    return ([calendar component:NSCalendarUnitWeekday fromDate:date] + 5) % 7 + 1;
+}
+static inline NSDate *SRAScheduledDate(NSDate *now, NSInteger direction, BOOL includeNow) {
+    NSInteger minutes = [SRARead(@"minuteOfDay", @540) integerValue];
+    if (minutes < 0 || minutes > 1439) return nil;
+    NSCalendar *calendar = SRACalendar();
+    NSDate *start = [calendar startOfDayForDate:now];
+    for (NSInteger offset = 0; offset <= 7; offset++) {
+        NSDate *day = [calendar dateByAddingUnit:NSCalendarUnitDay value:direction * offset toDate:start options:0];
+        NSString *key = [NSString stringWithFormat:@"weekday%ld", (long)SRAWeekday(calendar, day)];
+        if (![SRARead(key, @NO) boolValue]) continue;
+        NSDate *candidate = [calendar dateBySettingHour:minutes / 60 minute:minutes % 60 second:0 ofDate:day options:NSCalendarMatchNextTime];
+        if (!candidate || ![calendar isDate:candidate inSameDayAsDate:day]) continue;
+        NSComparisonResult comparison = [candidate compare:now];
+        if ((direction > 0 && comparison == NSOrderedDescending) ||
+            (direction < 0 && comparison == NSOrderedAscending) ||
+            (includeNow && comparison == NSOrderedSame)) return candidate;
+    }
+    return nil;
+}
+static inline NSString *SRAStatusText(uint64_t status) {
+    switch (status) {
+        case SRAStatusRequested: return @"已请求打开 SideStore，等待插件响应";
+        case SRAStatusRunning: return @"已调用刷新全部，等待 SideStore 响应";
+        case SRAStatusResponseSuccess: return @"SideStore 返回成功；请到我的应用核对签名有效期";
+        case SRAStatusFailure: return @"SideStore 返回失败，请检查其错误提示、登录和配对文件";
+        case SRAStatusDirectUnavailable: return @"本机设备通道不可达，尚未开始续签";
+        case SRAStatusUnconfirmed: return @"未确认续签完成，请到 SideStore 核对有效期";
+        case SRAStatusUnsupported: return @"此版本的续签接口或插件注入未就绪";
+        case SRAStatusLocked: return @"等待解锁后执行；过期超过 24 小时的任务跳过";
+        case SRAStatusOpenFailed: return @"打开 SideStore 失败，请检查应用是否已安装";
+        default: return @"尚无执行记录";
+    }
+}
