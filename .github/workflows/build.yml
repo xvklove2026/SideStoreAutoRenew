@@ -45,7 +45,15 @@ jobs:
           mkdir -p "$APELIN_PACKAGE_DIR"
           sh -n apelin/build.sh
           plutil -lint Preferences/Info.plist Preferences/Root.plist Preferences/Entry.plist
-          sh apelin/build.sh
+          if ! sh apelin/build.sh > "$RUNNER_TEMP/sra-build.log" 2>&1; then
+            cat "$RUNNER_TEMP/sra-build.log"
+            while IFS= read -r diagnostic; do
+              diagnostic="${diagnostic//'%'/'%25'}"
+              printf '::error::%s\n' "$diagnostic"
+            done < "$RUNNER_TEMP/sra-build.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/sra-build.log"
           for package in "$APELIN_PACKAGE_DIR"/*.deb; do
             dpkg-deb --info "$package"
             dpkg-deb --contents "$package"
