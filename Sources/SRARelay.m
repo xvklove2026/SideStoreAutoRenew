@@ -37,7 +37,8 @@ static NSString *SRAServerExecutable;
 static int SRAServerFD = -1;
 static dispatch_source_t SRAServerSource;
 static dispatch_semaphore_t SRAServerSlots;
-static const uint32_t SRARelayMagic = 0x53524131;
+// Version 2 connects the client's original socket; never replaces its identity.
+static const uint32_t SRARelayMagic = 0x53524132;
 typedef struct { uint32_t magic; uint16_t port; uint16_t reserved; } SRAOpen;
 
 static BOOL SRAPortAllowed(uint16_t port) { return port == 62078 || port >= 49152; }
@@ -61,7 +62,8 @@ static BOOL SRAExactIO(int fd, void *data, size_t length, BOOL writing) {
     while (offset < length) {
         ssize_t count = writing ? send(fd, (char *)data + offset, length - offset, 0) : recv(fd, (char *)data + offset, length - offset, 0);
         if (count < 0 && errno == EINTR) continue;
-        if (count <= 0) return NO;
+        if (count < 0) return NO;
+        if (count == 0) { errno = ECONNRESET; return NO; }
         offset += (size_t)count;
     }
     return YES;
@@ -72,18 +74,16 @@ static void SRATimeout(int fd) {
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     int enabled = 1; setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled));
 }
-static int SRAOpenLocal(uint16_t port) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
+static int SRAConnectLocal(int fd, uint16_t port) {
     int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) { int e = errno; close(fd); errno = e; return -1; }
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
     struct sockaddr_in address = {0};
     address.sin_len = sizeof(address); address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK); address.sin_port = htons(port);
     int result = connect(fd, (struct sockaddr *)&address, sizeof(address));
     if (result < 0 && errno == EINPROGRESS) {
         struct pollfd item = { .fd = fd, .events = POLLOUT };
-        result = poll(&item, 1, 1500);
+        do { result = poll(&item, 1, 1500); } while (result < 0 && errno == EINTR);
         if (result > 0) {
             int error = 0; socklen_t length = sizeof(error);
             if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) < 0) result = -1;
@@ -91,10 +91,10 @@ static int SRAOpenLocal(uint16_t port) {
             else result = 0;
         } else { if (result == 0) errno = ETIMEDOUT; result = -1; }
     }
-    int error = errno;
-    if (result < 0) { close(fd); errno = error; return -1; }
-    if (fcntl(fd, F_SETFL, flags) < 0) { error = errno; close(fd); errno = error; return -1; }
-    return fd;
+    int error = result < 0 ? errno : 0;
+    if (fcntl(fd, F_SETFL, flags) < 0 && !error) error = errno;
+    if (error) { errno = error; return -1; }
+    return 0;
 }
 static void SRAHandlePeer(int peer, NSString *executable) {
     @autoreleasepool {
@@ -106,24 +106,45 @@ static void SRAHandlePeer(int peer, NSString *executable) {
         BOOL trusted = getsockopt(peer, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0 && pid > 0 &&
             readProcessPath && readProcessPath(pid, path, sizeof(path)) > 0 &&
             realpath(path, actual) && realpath(executable.fileSystemRepresentation, expected) && strcmp(actual, expected) == 0;
+        if (!trusted) { close(peer); return; }
         SRAOpen request = {0};
-        if (!trusted || !SRAExactIO(peer, &request, sizeof(request), NO) || ntohl(request.magic) != SRARelayMagic || request.reserved || !SRAPortAllowed(ntohs(request.port))) {
-            close(peer); return;
-        }
-        int remote = SRAOpenLocal(ntohs(request.port));
-        int error = remote < 0 ? errno : 0;
-        uint32_t response = htonl((uint32_t)error);
-        struct iovec vector = { .iov_base = &response, .iov_len = sizeof(response) };
-        union { struct cmsghdr alignment; char bytes[CMSG_SPACE(sizeof(int))]; } control = {0};
+        struct iovec vector = { .iov_base = &request, .iov_len = sizeof(request) };
+        union { struct cmsghdr alignment; char bytes[CMSG_SPACE(sizeof(int) * 8)]; } control = {0};
         struct msghdr message = {0}; message.msg_iov = &vector; message.msg_iovlen = 1;
-        if (remote >= 0) {
-            message.msg_control = control.bytes; message.msg_controllen = sizeof(control.bytes);
-            struct cmsghdr *header = CMSG_FIRSTHDR(&message);
-            header->cmsg_level = SOL_SOCKET; header->cmsg_type = SCM_RIGHTS; header->cmsg_len = CMSG_LEN(sizeof(int));
-            memcpy(CMSG_DATA(header), &remote, sizeof(remote));
+        message.msg_control = control.bytes; message.msg_controllen = sizeof(control.bytes);
+        ssize_t count;
+        do { count = recvmsg(peer, &message, MSG_WAITALL); } while (count < 0 && errno == EINTR);
+        int remote = -1; unsigned descriptorCount = 0;
+        for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header; header = CMSG_NXTHDR(&message, header)) {
+            if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS || header->cmsg_len < CMSG_LEN(0)) continue;
+            size_t bytes = header->cmsg_len - CMSG_LEN(0);
+            for (size_t offset = 0; offset + sizeof(int) <= bytes; offset += sizeof(int)) {
+                int candidate = -1; memcpy(&candidate, (char *)CMSG_DATA(header) + offset, sizeof(candidate));
+                descriptorCount++;
+                if (remote < 0) remote = candidate; else close(candidate);
+            }
         }
-        ssize_t sent = sendmsg(peer, &message, 0);
-        os_log(SRALog(), "Local relay response port=%u errno=%d sent=%d build=%{public}s", (unsigned)ntohs(request.port), error, sent == sizeof(response), APELIN_BUILD_ID);
+        if (count > 0 && (size_t)count < sizeof(request) &&
+            SRAExactIO(peer, (char *)&request + count, sizeof(request) - (size_t)count, NO)) count = sizeof(request);
+        int error = 0;
+        if (count != sizeof(request) || (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) ||
+            descriptorCount != 1 || remote < 0 || ntohl(request.magic) != SRARelayMagic ||
+            request.reserved || !SRAPortAllowed(ntohs(request.port))) error = EPROTO;
+        int type = 0; socklen_t typeSize = sizeof(type);
+        struct sockaddr_storage local = {0}, connected = {0};
+        socklen_t localSize = sizeof(local), connectedSize = sizeof(connected);
+        if (!error && (getsockopt(remote, SOL_SOCKET, SO_TYPE, &type, &typeSize) != 0 ||
+            type != SOCK_STREAM || getsockname(remote, (struct sockaddr *)&local, &localSize) != 0 ||
+            local.ss_family != AF_INET)) error = EINVAL;
+        if (!error) {
+            int result = getpeername(remote, (struct sockaddr *)&connected, &connectedSize);
+            if (result == 0) error = EISCONN;
+            else if (errno != ENOTCONN) error = errno;
+        }
+        if (!error && SRAConnectLocal(remote, ntohs(request.port)) != 0) error = errno;
+        uint32_t response = htonl((uint32_t)error);
+        BOOL sent = SRAExactIO(peer, &response, sizeof(response), YES);
+        os_log(SRALog(), "Local relay original-socket port=%u errno=%d sent=%d build=%{public}s", (unsigned)ntohs(request.port), error, sent, APELIN_BUILD_ID);
         if (remote >= 0) close(remote);
         close(peer);
     }
@@ -226,55 +247,45 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
         errno = error; return -1;
     }
     SRATimeout(peer);
-    int received = -1; int error = 0;
+    int error = 0;
     const char *stage = "ipc-connect";
     os_log(SRALog(), "Local relay begin fd=%d port=%u nonblocking=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, APELIN_BUILD_ID);
     SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, 0);
     if (SRAOriginalConnect(peer, (struct sockaddr *)&endpoint, endpoint.sun_len) != 0) error = errno;
     if (!error) stage = "ipc-request";
     SRAOpen request = { .magic = htonl(SRARelayMagic), .port = target->sin_port, .reserved = 0 };
-    if (!error && !SRAExactIO(peer, &request, sizeof(request), YES)) error = errno ?: ECONNRESET;
     if (!error) {
-        stage = "ipc-response";
-        uint32_t response = 0;
-        struct iovec vector = { .iov_base = &response, .iov_len = sizeof(response) };
+        struct iovec vector = { .iov_base = &request, .iov_len = sizeof(request) };
         union { struct cmsghdr alignment; char bytes[CMSG_SPACE(sizeof(int))]; } control = {0};
         struct msghdr message = {0}; message.msg_iov = &vector; message.msg_iovlen = 1;
         message.msg_control = control.bytes; message.msg_controllen = sizeof(control.bytes);
-        ssize_t count = recvmsg(peer, &message, MSG_WAITALL);
         struct cmsghdr *header = CMSG_FIRSTHDR(&message);
-        if (header && header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS && header->cmsg_len == CMSG_LEN(sizeof(int))) memcpy(&received, CMSG_DATA(header), sizeof(received));
-        if (count != sizeof(response) || (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC))) error = count < 0 ? errno : EPROTO;
+        header->cmsg_level = SOL_SOCKET; header->cmsg_type = SCM_RIGHTS; header->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(header), &fd, sizeof(fd));
+        ssize_t sent;
+        do { sent = sendmsg(peer, &message, 0); } while (sent < 0 && errno == EINTR);
+        if (sent < 0) error = errno;
+        else if (sent == 0) error = ECONNRESET;
+        else if ((size_t)sent < sizeof(request) &&
+                 !SRAExactIO(peer, (char *)&request + sent, sizeof(request) - (size_t)sent, YES)) error = errno ?: ECONNRESET;
+    }
+    if (!error) {
+        stage = "ipc-response";
+        uint32_t response = 0;
+        if (!SRAExactIO(peer, &response, sizeof(response), NO)) error = errno ?: ECONNRESET;
         else error = (int)ntohl(response);
-        if (!error && received < 0) error = EPROTO;
     }
     close(peer);
     if (!error) {
-        stage = "socket-options";
-        const int levels[] = { SOL_SOCKET, IPPROTO_TCP, SOL_SOCKET };
-        const int options[] = { SO_KEEPALIVE, TCP_NODELAY, SO_NOSIGPIPE };
-        for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); i++) {
-            int value = 0; socklen_t size = sizeof(value);
-            if (getsockopt(fd, levels[i], options[i], &value, &size) != 0 ||
-                setsockopt(received, levels[i], options[i], &value, size) != 0) {
-                error = errno;
-                os_log_error(SRALog(), "Local relay option=%d errno=%d", options[i], error);
-                break;
-            }
-        }
-        const int timeoutOptions[] = { SO_RCVTIMEO, SO_SNDTIMEO };
-        if (!error) stage = "socket-timeouts";
-        for (size_t i = 0; !error && i < sizeof(timeoutOptions) / sizeof(timeoutOptions[0]); i++) {
-            struct timeval timeout = {0}; socklen_t timeoutSize = sizeof(timeout);
-            if (getsockopt(fd, SOL_SOCKET, timeoutOptions[i], &timeout, &timeoutSize) != 0 ||
-                setsockopt(received, SOL_SOCKET, timeoutOptions[i], &timeout, timeoutSize) != 0) { error = errno; break; }
-        }
-        if (!error) { stage = "status-flags"; if (fcntl(received, F_SETFL, flags) < 0) error = errno; }
-        if (!error) { stage = "dup2"; if (dup2(received, fd) < 0) error = errno; }
-        if (!error) { stage = "descriptor-flags"; if (fcntl(fd, F_SETFD, descriptorFlags) < 0) error = errno; }
-        if (!error) stage = "connected";
+        stage = "verify-original";
+        struct sockaddr_in connected = {0}; socklen_t connectedSize = sizeof(connected);
+        if (getpeername(fd, (struct sockaddr *)&connected, &connectedSize) != 0) error = errno;
+        else if (connected.sin_family != AF_INET || connected.sin_addr.s_addr != htonl(INADDR_LOOPBACK) ||
+                 connected.sin_port != target->sin_port) error = EPROTO;
+        if (!error && fcntl(fd, F_GETFL, 0) != flags) error = EIO;
+        if (!error && fcntl(fd, F_GETFD, 0) != descriptorFlags) error = EIO;
+        if (!error) stage = "connected-original";
     }
-    if (received >= 0) close(received);
     os_log(SRALog(), "Local relay connect fd=%d port=%u nonblocking=%d stage=%{public}s errno=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error, APELIN_BUILD_ID);
     SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error);
     if (error) { errno = error; return -1; }

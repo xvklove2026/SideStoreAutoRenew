@@ -50,6 +50,14 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 
 待验证：双目标编译及链接；SpringBoard 创建容器内监听的权限；SideStore 的 Unix socket 连接及描述符接收权限；后端是否经过被 Hook 的 connect、动态服务端口是否落在允许范围；Minimuxer 启动、配对和真实签名有效期。当前端口范围是实验假设，尚未证实覆盖所有设备服务。收到描述符仍不证明应用读写或续签成功。应用容器变化后要求重启 SpringBoard。
 
+## 原 socket 连接修补（2026-11-27，待构建及实测）
+
+第 12 次构建 ee2d5da 已安装：SideStore 控制台确认 hook-ready，62078 的 IPC 与描述符置换均返回成功，但随后心跳 Broken pipe、首次心跳 10 秒超时；尚未证明续签成功。
+
+本轮移除客户端 dup2 置换，改由 SideStore 通过 SCM_RIGHTS 传出原始未连接 socket，SpringBoard 校验后在同一个 socket 上连接回环目标，仅返回连接结果。这样保留原 socket 的身份、选项及已有事件注册；旧版置换可能影响异步后端事件绑定，这是待实测的原因假设。客户端还会核对连接端点和描述符标志，成功阶段为 connected-original。协议标记升级为 SRA2，避免新旧方式静默混用。
+
+安装新包后必须重启 SpringBoard 并重新启动 SideStore，使两端协议一起更新；再核对 connected-original、心跳、Minimuxer 和签名有效期。若原 socket 的跨进程连接被系统限制，记录真实错误，不能把编译成功当作通信成功。
+
 ## 构建和安装
 
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
