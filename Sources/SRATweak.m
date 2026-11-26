@@ -10,7 +10,7 @@ static int SRARequestToken, SRAStatusToken;
 static BOOL SRABusy;
 static uint64_t SRAHandled;
 static NSDate *SRAStarted;
-static UIBackgroundTaskIdentifier SRABackground = UIBackgroundTaskInvalid;
+static UIBackgroundTaskIdentifier SRABackground;
 static id SRAIntent;
 static id SRAHandler;
 static NSTimer *SRATimer;
@@ -140,6 +140,7 @@ static void SRATick(void) {
     SRAStartRequest(slot);
 }
 __attribute__((constructor)) static void SRAInitialize(void) {
+    SRABackground = UIBackgroundTaskInvalid;
     @autoreleasepool {
         if ([NSBundle.mainBundle.bundleIdentifier hasPrefix:@"com.SideStore.SideStore"])
             SRAInstallDirectConnection();
