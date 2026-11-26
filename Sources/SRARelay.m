@@ -91,8 +91,8 @@ static void SRAObserveResult(SRAObservedSocket socket, const char *operation, ss
     ssize_t result = (CALL); int saved = errno; \
     SRAObserveResult(observed, OP, result, result < 0 ? saved : 0); \
     SRAInsideIO = NO; errno = saved; return result;
-static ssize_t SRARead(int fd, void *buffer, size_t length) { SRA_IO_BODY("read", SRAOriginalRead(fd, buffer, length)) }
-static ssize_t SRAWrite(int fd, const void *buffer, size_t length) { SRA_IO_BODY("write", SRAOriginalWrite(fd, buffer, length)) }
+static ssize_t SRAIORead(int fd, void *buffer, size_t length) { SRA_IO_BODY("read", SRAOriginalRead(fd, buffer, length)) }
+static ssize_t SRAIOWrite(int fd, const void *buffer, size_t length) { SRA_IO_BODY("write", SRAOriginalWrite(fd, buffer, length)) }
 static ssize_t SRARecv(int fd, void *buffer, size_t length, int flags) { SRA_IO_BODY("recv", SRAOriginalRecv(fd, buffer, length, flags)) }
 static ssize_t SRASend(int fd, const void *buffer, size_t length, int flags) { SRA_IO_BODY("send", SRAOriginalSend(fd, buffer, length, flags)) }
 static ssize_t SRAReadv(int fd, const struct iovec *vectors, int count) { SRA_IO_BODY("readv", SRAOriginalReadv(fd, vectors, count)) }
@@ -383,8 +383,8 @@ void SRAInstallRelayClient(NSString *host) {
     void *entry = dlsym(RTLD_DEFAULT, NAME); \
     if (entry) MSHookFunction(entry, (void *)HOOK, (void **)&ORIGINAL); \
 } while (0)
-    SRA_INSTALL_IO("read", SRARead, SRAOriginalRead);
-    SRA_INSTALL_IO("write", SRAWrite, SRAOriginalWrite);
+    SRA_INSTALL_IO("read", SRAIORead, SRAOriginalRead);
+    SRA_INSTALL_IO("write", SRAIOWrite, SRAOriginalWrite);
     SRA_INSTALL_IO("recv", SRARecv, SRAOriginalRecv);
     SRA_INSTALL_IO("send", SRASend, SRAOriginalSend);
     SRA_INSTALL_IO("readv", SRAReadv, SRAOriginalReadv);
