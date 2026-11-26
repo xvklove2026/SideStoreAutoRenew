@@ -17,6 +17,16 @@
 #import <stddef.h>
 #import <netinet/tcp.h>
 #import <string.h>
+#import <stdio.h>
+
+// Mirror coarse diagnostics to the host's existing stderr capture, not a file.
+// Socket hooks must not change errno merely by reporting a result.
+static void SRAConsoleRelay(int fd, uint16_t port, int nonblocking, const char *stage, int error) {
+    int saved = errno;
+    fprintf(stderr, "[SRA relay] fd=%d port=%u nonblocking=%d stage=%s errno=%d build=%s\n",
+            fd, (unsigned)port, nonblocking, stage, error, APELIN_BUILD_ID);
+    errno = saved;
+}
 
 extern void MSHookFunction(void *, void *, void **);
 static int (*SRAOriginalConnect)(int, const struct sockaddr *, socklen_t);
@@ -194,18 +204,32 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
     int type = 0; socklen_t typeSize = sizeof(type);
     if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &typeSize) != 0 || type != SOCK_STREAM) return SRAOriginalConnect(fd, address, length);
     // Never introduce a blocking IPC handshake on the app's main thread.
-    if (NSThread.isMainThread) { errno = EWOULDBLOCK; return -1; }
+    if (NSThread.isMainThread) {
+        SRAConsoleRelay(fd, ntohs(target->sin_port), -1, "main-thread", EWOULDBLOCK);
+        errno = EWOULDBLOCK; return -1;
+    }
     int flags = fcntl(fd, F_GETFL, 0); int descriptorFlags = fcntl(fd, F_GETFD, 0);
     struct sockaddr_storage existing; socklen_t existingSize = sizeof(existing);
-    if (getpeername(fd, (struct sockaddr *)&existing, &existingSize) == 0) { errno = EISCONN; return -1; }
+    if (getpeername(fd, (struct sockaddr *)&existing, &existingSize) == 0) {
+        SRAConsoleRelay(fd, ntohs(target->sin_port), flags < 0 ? -1 : (flags & O_NONBLOCK) != 0, "already-connected", EISCONN);
+        errno = EISCONN; return -1;
+    }
     struct sockaddr_un endpoint;
-    if (flags < 0 || descriptorFlags < 0 || !SRAUnixAddress(SRAClientPath, &endpoint)) { errno = EINVAL; return -1; }
+    if (flags < 0 || descriptorFlags < 0 || !SRAUnixAddress(SRAClientPath, &endpoint)) {
+        SRAConsoleRelay(fd, ntohs(target->sin_port), flags < 0 ? -1 : (flags & O_NONBLOCK) != 0, "client-setup", EINVAL);
+        errno = EINVAL; return -1;
+    }
     int peer = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (peer < 0) return -1;
+    if (peer < 0) {
+        int error = errno;
+        SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, "ipc-socket", error);
+        errno = error; return -1;
+    }
     SRATimeout(peer);
     int received = -1; int error = 0;
     const char *stage = "ipc-connect";
     os_log(SRALog(), "Local relay begin fd=%d port=%u nonblocking=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, APELIN_BUILD_ID);
+    SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, 0);
     if (SRAOriginalConnect(peer, (struct sockaddr *)&endpoint, endpoint.sun_len) != 0) error = errno;
     if (!error) stage = "ipc-request";
     SRAOpen request = { .magic = htonl(SRARelayMagic), .port = target->sin_port, .reserved = 0 };
@@ -252,6 +276,7 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
     }
     if (received >= 0) close(received);
     os_log(SRALog(), "Local relay connect fd=%d port=%u nonblocking=%d stage=%{public}s errno=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error, APELIN_BUILD_ID);
+    SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error);
     if (error) { errno = error; return -1; }
     return 0;
 }
@@ -263,4 +288,8 @@ void SRAInstallRelayClient(NSString *host) {
     SRARelayHost = address.s_addr;
     void *symbol = dlsym(RTLD_DEFAULT, "connect");
     if (symbol) MSHookFunction(symbol, (void *)SRARelayConnect, (void **)&SRAOriginalConnect);
+    // The host starts capturing stderr after constructors have completed.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        SRAConsoleRelay(-1, 0, -1, SRAOriginalConnect ? "hook-ready" : "hook-unavailable", SRAOriginalConnect ? 0 : ENOSYS);
+    });
 }
