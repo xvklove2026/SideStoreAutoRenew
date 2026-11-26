@@ -8,6 +8,7 @@
 #define SRA_STATUS SRA_DOMAIN "/status"
 #define SRA_CHANGED SRA_DOMAIN "/changed"
 #define SRA_MANUAL SRA_DOMAIN "/manual"
+#define SRA_DIAGNOSTIC SRA_DOMAIN "/diagnostic"
 #ifndef APELIN_BUILD_ID
 #define APELIN_BUILD_ID "unbuilt"
 #endif

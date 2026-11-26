@@ -1,5 +1,7 @@
 #import <Preferences/PSListController.h>
 #import "SRACommon.h"
+#import <errno.h>
+#import <string.h>
 
 @interface SRATimeController : UIViewController
 @property(nonatomic, strong) UIDatePicker *picker;
@@ -72,7 +74,20 @@
     [next setProperty:nextText forKey:@"footerText"];
     if (next) [self reloadSpecifier:next];
     PSSpecifier *status = [self specifierForID:@"status"];
-    [status setProperty:SRAStatusText([SRARead(@"lastStatus", @0) unsignedLongLongValue]) forKey:@"footerText"];
+    NSString *statusText = SRAStatusText([SRARead(@"lastStatus", @0) unsignedLongLongValue]);
+    if ([SRARead(@"lastStatus", @0) unsignedLongLongValue] == SRAStatusDirectUnavailable) {
+        NSNumber *storedError = SRARead(@"lastConnectionError", nil);
+        if (storedError) {
+            int error = storedError.intValue;
+            NSString *hint = @"请保留此错误码以便进一步诊断";
+            if (error == EPERM || error == EACCES) hint = @"访问被拒绝，请检查 SideStore 的本地网络权限";
+            else if (error == ETIMEDOUT) hint = @"连接超时，尚未确认设备服务可达";
+            else if (error == ECONNREFUSED) hint = @"目标端口拒绝连接";
+            else if (error == EADDRNOTAVAIL) hint = @"网络地址已变化，请完全退出后重开 SideStore";
+            statusText = [statusText stringByAppendingFormat:@"\n连接诊断 errno=%d (%s)\n%@", error, strerror(error), hint];
+        }
+    }
+    [status setProperty:statusText forKey:@"footerText"];
     if (status) [self reloadSpecifier:status];
 }
 - (void)showTimePicker {

@@ -71,7 +71,7 @@ void SRAInstallDirectConnection(void) {
                ![SRADirectHost isEqualToString:@"127.0.0.1"]);
     });
 }
-void SRAProbeDirectConnection(void (^completion)(BOOL reachable)) {
+void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error)) {
     // Probe from the SideStore process, not SpringBoard or a privileged helper.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         BOOL reachable = NO;
@@ -82,7 +82,7 @@ void SRAProbeDirectConnection(void (^completion)(BOOL reachable)) {
         // and then claim that the backend's cached connection is usable.
         if (![current isEqualToString:host]) {
             os_log_error(SRALog(), "Local interface changed; relaunch SideStore before retrying");
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(NO); });
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, EADDRNOTAVAIL); });
             return;
         }
         int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -123,6 +123,6 @@ void SRAProbeDirectConnection(void (^completion)(BOOL reachable)) {
         }
         os_log(SRALog(), "Local TCP probe wifi=%d reachable=%d errno=%d build=%{public}s",
                ![host isEqualToString:@"127.0.0.1"], reachable, failure, APELIN_BUILD_ID);
-        dispatch_async(dispatch_get_main_queue(), ^{ completion(reachable); });
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(reachable, failure); });
     });
 }

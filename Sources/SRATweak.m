@@ -6,7 +6,7 @@
 #import "SRACommon.h"
 #import "SRADirect.h"
 
-static int SRARequestToken, SRAStatusToken;
+static int SRARequestToken, SRAStatusToken, SRADiagnosticToken;
 static BOOL SRABusy;
 static uint64_t SRAHandled;
 static NSDate *SRAStarted;
@@ -79,8 +79,10 @@ static void SRAHandleRequest(void) {
     };
     // Confirmation callbacks can arrive more than once; dispatch handle only once.
     __block BOOL handleDispatched = NO;
-    SRAProbeDirectConnection(^(BOOL reachable) {
+    SRAProbeDirectConnection(^(BOOL reachable, int error) {
         if (!SRABusy || SRAActiveRequest != request) return;
+        // Publish before the terminal status; SpringBoard reads both together.
+        notify_set_state(SRADiagnosticToken, (uint64_t)MAX(error, 0));
         if (!reachable) { SRAFinish(SRAStatusDirectUnavailable); return; }
         ((void (*)(id, SEL, id, id))objc_msgSend)(handler, confirm, intent, ^(id response) {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -118,6 +120,8 @@ static void SRAStartRequest(NSDate *slot) {
     uint64_t request = (uint64_t)(NSDate.date.timeIntervalSince1970 * 1000);
     SRAStarted = NSDate.date;
     SRAWrite(@"lastStatus", @(SRAStatusRequested));
+    SRAWrite(@"lastConnectionError", nil);
+    notify_set_state(SRADiagnosticToken, 0);
     SRAWrite(@"lastAttempt", @(NSDate.date.timeIntervalSince1970));
     if (slot) SRAWrite(@"lastSlot", @(slot.timeIntervalSince1970));
     notify_set_state(SRARequestToken, request);
@@ -163,9 +167,14 @@ __attribute__((constructor)) static void SRAInitialize(void) {
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
         BOOL springboard = [bundle isEqualToString:@"com.apple.springboard"];
         notify_register_check(SRA_REQUEST, &SRARequestToken);
+        notify_register_check(SRA_DIAGNOSTIC, &SRADiagnosticToken);
         if (springboard) {
             notify_register_dispatch(SRA_STATUS, &SRAStatusToken, dispatch_get_main_queue(), ^(int token) {
                 uint64_t status = 0; notify_get_state(token, &status);
+                if (status == SRAStatusDirectUnavailable) {
+                    uint64_t error = 0; notify_get_state(SRADiagnosticToken, &error);
+                    SRAWrite(@"lastConnectionError", @(error));
+                }
                 SRAWrite(@"lastStatus", @(status));
                 SRAWrite(@"lastResponse", @(NSDate.date.timeIntervalSince1970));
             });
