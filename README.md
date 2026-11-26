@@ -40,6 +40,16 @@ SideStore 可能提前返回成功；当前显示“SideStore 返回成功，请
 在不支持注入的设备上，本插件不运行。关机、退出越狱、系统深度休眠时不保证准点，解锁补执行需要实机验证。
 账号、配对文件与网络仍依赖 SideStore 自己的配置。实验性本机直连：Sources/SRADirect.m 在 SideStore 内 Hook 标准 UserDefaults 的 useLocalVPN 和 RemoteServerIp 读取，选择非 VPN 模式及启动时发现的本机 Wi-Fi IPv4 地址（无 Wi-Fi 时使用回环），不持久化覆盖原设置。续签前从 SideStore 自身异步检测相同地址的 62078 端口；保留后端真实配对和可达性检查。shell 中端口可连不代表 SideStore 沙盒内可达；新版应用内 TCP、Minimuxer 启动和实际配对仍需安装验证。
 
+## 实验性本机转发（尚未编译验证）
+
+2026-11-27，33ee6b1 安装实测定位到发起 TCP connect 阶段 errno=1；Wi-Fi 与蜂窝策略均允许。未捕获到明确的系统拒绝规则，因此具体原因仍未确认。
+
+Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideStore 容器，在其 tmp 内建立 Unix socket；核对客户端进程路径后，仅向本机回环 62078 或 49152 以上端口连接，通过 SCM_RIGHTS 交付已连接描述符。SideStore 中 Hook connect，仅处理配置的本机地址和回环地址，其他连接保持原实现。不改 SideStore 的账号、配对文件或签名校验。转发准备和服务均在后台队列执行。
+
+已通过 sh -n apelin/build.sh；本机构建停在 SDKROOT 缺失，尚未进入 Objective-C 编译。当前设备无已注册工具链或 SDK，可选工具链均要求设备缺少的 FEAT_LRCPC。本改动将通过 GitHub Actions 获取编译诊断；设备安装和实际续签验证仍待进行。
+
+待验证：双目标编译及链接；SpringBoard 创建容器内监听的权限；SideStore 的 Unix socket 连接及描述符接收权限；后端是否经过被 Hook 的 connect、动态服务端口是否落在允许范围；Minimuxer 启动、配对和真实签名有效期。当前端口范围是实验假设，尚未证实覆盖所有设备服务。收到描述符仍不证明应用读写或续签成功。应用容器变化后要求重启 SpringBoard。
+
 ## 构建和安装
 
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。

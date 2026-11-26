@@ -5,6 +5,7 @@
 #import <dlfcn.h>
 #import "SRACommon.h"
 #import "SRADirect.h"
+#import "SRARelay.h"
 
 static int SRARequestToken, SRAStatusToken, SRADiagnosticToken;
 static BOOL SRABusy;
@@ -118,6 +119,7 @@ static void SRAStartRequest(NSDate *slot) {
             SRAWrite(@"lastStatus", @(SRAStatusLocked));
         return;
     }
+    SRAStartRelayServer();
     uint64_t request = (uint64_t)(NSDate.date.timeIntervalSince1970 * 1000);
     SRAStarted = NSDate.date;
     SRAWrite(@"lastStatus", @(SRAStatusRequested));
@@ -171,6 +173,7 @@ __attribute__((constructor)) static void SRAInitialize(void) {
         notify_register_check(SRA_REQUEST, &SRARequestToken);
         notify_register_check(SRA_DIAGNOSTIC, &SRADiagnosticToken);
         if (springboard) {
+            SRAStartRelayServer();
             notify_register_dispatch(SRA_STATUS, &SRAStatusToken, dispatch_get_main_queue(), ^(int token) {
                 uint64_t status = 0; notify_get_state(token, &status);
                 if (status == SRAStatusDirectUnavailable) {

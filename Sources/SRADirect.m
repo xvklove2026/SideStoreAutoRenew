@@ -1,5 +1,6 @@
 #import "SRADirect.h"
 #import "SRACommon.h"
+#import "SRARelay.h"
 #import <objc/runtime.h>
 #import <sys/socket.h>
 #import <arpa/inet.h>
@@ -61,6 +62,7 @@ void SRAInstallDirectConnection(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         SRADirectHost = [SRALocalWiFiAddress() copy] ?: @"127.0.0.1";
+        SRAInstallRelayClient(SRADirectHost);
         // Install before ConnectionConfig's Swift singleton reads its settings.
         // Use this device's Wi-Fi address when available, not a remote server.
         // These are process-local reads; existing saved VPN configuration is kept.
