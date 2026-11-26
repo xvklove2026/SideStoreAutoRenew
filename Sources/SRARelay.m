@@ -113,7 +113,7 @@ static void SRAHandlePeer(int peer, NSString *executable) {
             memcpy(CMSG_DATA(header), &remote, sizeof(remote));
         }
         ssize_t sent = sendmsg(peer, &message, 0);
-        os_log(SRALog(), "Local relay response errno=%d sent=%d build=%{public}s", error, sent == sizeof(response), APELIN_BUILD_ID);
+        os_log(SRALog(), "Local relay response port=%u errno=%d sent=%d build=%{public}s", (unsigned)ntohs(request.port), error, sent == sizeof(response), APELIN_BUILD_ID);
         if (remote >= 0) close(remote);
         close(peer);
     }
@@ -204,10 +204,14 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
     if (peer < 0) return -1;
     SRATimeout(peer);
     int received = -1; int error = 0;
+    const char *stage = "ipc-connect";
+    os_log(SRALog(), "Local relay begin fd=%d port=%u nonblocking=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, APELIN_BUILD_ID);
     if (SRAOriginalConnect(peer, (struct sockaddr *)&endpoint, endpoint.sun_len) != 0) error = errno;
+    if (!error) stage = "ipc-request";
     SRAOpen request = { .magic = htonl(SRARelayMagic), .port = target->sin_port, .reserved = 0 };
     if (!error && !SRAExactIO(peer, &request, sizeof(request), YES)) error = errno ?: ECONNRESET;
     if (!error) {
+        stage = "ipc-response";
         uint32_t response = 0;
         struct iovec vector = { .iov_base = &response, .iov_len = sizeof(response) };
         union { struct cmsghdr alignment; char bytes[CMSG_SPACE(sizeof(int))]; } control = {0};
@@ -222,23 +226,32 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
     }
     close(peer);
     if (!error) {
-        int keepAlive = 0, noDelay = 0, noSignal = 0; socklen_t size = sizeof(int);
-        getsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, &size); size = sizeof(int);
-        getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, &size); size = sizeof(int);
-        getsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, &size);
-        setsockopt(received, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
-        setsockopt(received, IPPROTO_TCP, TCP_NODELAY, &noDelay, sizeof(int));
-        setsockopt(received, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, sizeof(int));
+        stage = "socket-options";
+        const int levels[] = { SOL_SOCKET, IPPROTO_TCP, SOL_SOCKET };
+        const int options[] = { SO_KEEPALIVE, TCP_NODELAY, SO_NOSIGPIPE };
+        for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); i++) {
+            int value = 0; socklen_t size = sizeof(value);
+            if (getsockopt(fd, levels[i], options[i], &value, &size) != 0 ||
+                setsockopt(received, levels[i], options[i], &value, size) != 0) {
+                error = errno;
+                os_log_error(SRALog(), "Local relay option=%d errno=%d", options[i], error);
+                break;
+            }
+        }
         const int timeoutOptions[] = { SO_RCVTIMEO, SO_SNDTIMEO };
-        for (size_t i = 0; i < sizeof(timeoutOptions) / sizeof(timeoutOptions[0]); i++) {
+        if (!error) stage = "socket-timeouts";
+        for (size_t i = 0; !error && i < sizeof(timeoutOptions) / sizeof(timeoutOptions[0]); i++) {
             struct timeval timeout = {0}; socklen_t timeoutSize = sizeof(timeout);
             if (getsockopt(fd, SOL_SOCKET, timeoutOptions[i], &timeout, &timeoutSize) != 0 ||
                 setsockopt(received, SOL_SOCKET, timeoutOptions[i], &timeout, timeoutSize) != 0) { error = errno; break; }
         }
-        if (!error && (fcntl(received, F_SETFL, flags) < 0 || dup2(received, fd) < 0 || fcntl(fd, F_SETFD, descriptorFlags) < 0)) error = errno;
+        if (!error) { stage = "status-flags"; if (fcntl(received, F_SETFL, flags) < 0) error = errno; }
+        if (!error) { stage = "dup2"; if (dup2(received, fd) < 0) error = errno; }
+        if (!error) { stage = "descriptor-flags"; if (fcntl(fd, F_SETFD, descriptorFlags) < 0) error = errno; }
+        if (!error) stage = "connected";
     }
     if (received >= 0) close(received);
-    os_log(SRALog(), "Local relay connect errno=%d build=%{public}s", error, APELIN_BUILD_ID);
+    os_log(SRALog(), "Local relay connect fd=%d port=%u nonblocking=%d stage=%{public}s errno=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error, APELIN_BUILD_ID);
     if (error) { errno = error; return -1; }
     return 0;
 }
