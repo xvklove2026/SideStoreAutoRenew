@@ -34,8 +34,8 @@ prefs="$stage$APELIN_PREFIX/Library/PreferenceBundles/SRAPreferences.bundle"
 # A11 devices require arm64 even when the roothide package is iphoneos-arm64e.
 lipo -create "$stage/slices/tweak-arm64.dylib" "$stage/slices/tweak-arm64e.dylib" -output "$tweak"
 lipo -create "$stage/slices/preferences-arm64" "$stage/slices/preferences-arm64e" -output "$prefs/SRAPreferences"
-lipo -verify_arch arm64 arm64e "$tweak"
-lipo -verify_arch arm64 arm64e "$prefs/SRAPreferences"
+lipo "$tweak" -verify_arch arm64 arm64e
+lipo "$prefs/SRAPreferences" -verify_arch arm64 arm64e
 ldid -S "$tweak"
 ldid -S "$prefs/SRAPreferences"
 cp Preferences/Info.plist "${prefs:?}/Info.plist"
