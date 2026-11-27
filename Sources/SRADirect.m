@@ -11,27 +11,58 @@
 #import <ifaddrs.h>
 #import <net/if.h>
 #import <string.h>
+#import <limits.h>
 
 // Keep the selected address stable for ConnectionConfig's cached singleton.
 static NSString *SRADirectHost;
-static NSString *SRALocalWiFiAddress(void) {
+static NSString *SRALocalDeviceAddress(BOOL *usingWiFi) {
     struct ifaddrs *interfaces = NULL;
     NSString *host = nil;
-    if (getifaddrs(&interfaces) != 0) return nil;
+    BOOL selectedWiFi = NO;
+    int bestRank = INT_MAX;
+    if (getifaddrs(&interfaces) != 0) {
+        if (usingWiFi) *usingWiFi = NO;
+        return nil;
+    }
     for (struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
-        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET ||
-            !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK) ||
-            strcmp(item->ifa_name, "en0") != 0) continue;
+        if (!item->ifa_addr || !item->ifa_name || item->ifa_addr->sa_family != AF_INET ||
+            !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+
+        // Prefer the known Wi-Fi interface; otherwise select an active
+        // cellular data interface. Never use a remote server or VPN address.
+        int rank;
+        BOOL candidateWiFi = NO;
+        if (strcmp(item->ifa_name, "en0") == 0) {
+            rank = 0;
+            candidateWiFi = YES;
+        } else if (strncmp(item->ifa_name, "pdp_ip", 6) == 0) {
+            const char *suffix = item->ifa_name + 6;
+            if (!*suffix) continue;
+            unsigned index = 0;
+            BOOL valid = YES;
+            for (const char *digit = suffix; *digit; digit++) {
+                if (*digit < '0' || *digit > '9' || index > 1000) { valid = NO; break; }
+                index = index * 10 + (unsigned)(*digit - '0');
+            }
+            if (!valid) continue;
+            rank = 1 + (int)index;
+        } else continue;
+        if (rank >= bestRank) continue;
+
         struct sockaddr_in *address = (struct sockaddr_in *)item->ifa_addr;
+        uint32_t value = ntohl(address->sin_addr.s_addr);
+        unsigned firstOctet = value >> 24;
+        if (!value || firstOctet == 0 || firstOctet == 127 || firstOctet >= 224 ||
+            (value >> 16) == 0xa9fe) continue;
         char buffer[INET_ADDRSTRLEN] = {0};
         if (inet_ntop(AF_INET, &address->sin_addr, buffer, sizeof(buffer))) {
-            NSString *candidate = [NSString stringWithUTF8String:buffer];
-            if (![candidate hasPrefix:@"169.254."] && ![candidate isEqualToString:@"0.0.0.0"])
-                host = candidate;
+            host = [NSString stringWithUTF8String:buffer];
+            selectedWiFi = candidateWiFi;
+            bestRank = rank;
         }
-        if (host) break;
     }
     freeifaddrs(interfaces);
+    if (usingWiFi) *usingWiFi = selectedWiFi;
     return host;
 }
 
@@ -61,26 +92,28 @@ static id SRAReadObject(id receiver, SEL selector, NSString *key) {
 void SRAInstallDirectConnection(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        SRADirectHost = [SRALocalWiFiAddress() copy] ?: @"127.0.0.1";
+        BOOL usingWiFi = NO;
+        NSString *host = SRALocalDeviceAddress(&usingWiFi);
+        SRADirectHost = [host copy] ?: @"127.0.0.1";
         SRAInstallRelayClient(SRADirectHost);
         // Install before ConnectionConfig's Swift singleton reads its settings.
-        // Use this device's Wi-Fi address when available, not a remote server.
-        // These are process-local reads; existing saved VPN configuration is kept.
+        // Keep saved VPN configuration untouched and preserve backend pairing.
         MSHookMessageEx(NSUserDefaults.class, @selector(boolForKey:), (IMP)SRAReadBool, (IMP *)&SRAOriginalBool);
         MSHookMessageEx(NSUserDefaults.class, @selector(stringForKey:), (IMP)SRAReadString, (IMP *)&SRAOriginalString);
         MSHookMessageEx(NSUserDefaults.class, @selector(objectForKey:), (IMP)SRAReadObject, (IMP *)&SRAOriginalObject);
-        os_log(SRALog(), "Local connection configured wifi=%d; pairing and service validation remain enabled",
-               ![SRADirectHost isEqualToString:@"127.0.0.1"]);
+        os_log(SRALog(), "Local connection configured wifi=%d cellular=%d; pairing and service validation remain enabled",
+               usingWiFi, host != nil && !usingWiFi);
     });
 }
 void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error, uint32_t stage)) {
     // Probe from the SideStore process, not SpringBoard or a privileged helper.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         BOOL reachable = NO;
+        BOOL usingWiFi = NO;
         int failure = 0;
         uint32_t stage = SRAConnectionStageAddress;
         NSString *host = SRADirectHost ?: @"127.0.0.1";
-        NSString *current = SRALocalWiFiAddress() ?: @"127.0.0.1";
+        NSString *current = SRALocalDeviceAddress(&usingWiFi) ?: @"127.0.0.1";
         // ConnectionConfig caches its address. Never probe a different address
         // and then claim that the backend's cached connection is usable.
         if (![current isEqualToString:host]) {
@@ -130,8 +163,8 @@ void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error, uint
             }
             close(fd);
         }
-        os_log(SRALog(), "Local TCP probe wifi=%d reachable=%d errno=%d stage=%u build=%{public}s",
-               ![host isEqualToString:@"127.0.0.1"], reachable, failure, stage, APELIN_BUILD_ID);
+        os_log(SRALog(), "Local TCP probe wifi=%d cellular=%d reachable=%d errno=%d stage=%u build=%{public}s",
+               usingWiFi, !usingWiFi && ![host isEqualToString:@"127.0.0.1"], reachable, failure, stage, APELIN_BUILD_ID);
         dispatch_async(dispatch_get_main_queue(), ^{ completion(reachable, failure, reachable ? SRAConnectionStageUnknown : stage); });
     });
 }

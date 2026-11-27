@@ -70,8 +70,9 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 
 协议升级为 SRA3，传递运行时配置的设备地址；SpringBoard 仅允许当前已启用本机 IPv4 接口地址，保留端口和对端进程校验，在原 socket 上连接该地址。客户端校验实际端点与请求一致。不将测试地址硬编码进源码。安装后需重启 SpringBoard 并重启 SideStore，核对两端协议、新构建标记、心跳、Minimuxer 及签名有效期。
 
-## 构建和安装
+0.1.3 工作区修补：连接地址选择从仅 en0 扩展为 en0 优先、pdp_ip* 蜂窝接口回退；仍不持久化改写 SideStore 配置，保留配对和服务校验。每次探测重新枚举当前地址并要求与启动时一致，网络切换后需重启 SideStore。尚未云构建、安装或验证蜂窝续签。
 
+## 构建和安装
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
 编译需注册的兼容工具链与 SDK，脚本使用构建提供的 SDKROOT、APELIN_* 变量，不持久化 bootstrap 实际路径。
 roothide 与 rootless 均编译 arm64 与 arm64e 后合并，并在签名前校验两种切片；设置 bundle 通过 Vendor 的最小 Preferences 声明链接。
