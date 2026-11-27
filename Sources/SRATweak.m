@@ -4,8 +4,7 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import "SRACommon.h"
-#import "SRADirect.h"
-#import "SRARelay.h"
+#import "SRACellular.h"
 
 static int SRARequestToken, SRAStatusToken, SRADiagnosticToken;
 static BOOL SRABusy;
@@ -74,29 +73,26 @@ static void SRAHandleRequest(void) {
             // SiriKit generated codes: success=4, failure=5. A success may be
             // optimistic in SideStore: never represent it as verified expiry.
             if (code == 4) SRAFinish(SRAStatusResponseSuccess);
-            else if (code >= 5) SRAFinish(SRAStatusFailure);
-            // ready/inProgress: retain until a terminal response or timeout.
+            else if (code == 5) SRAFinish(SRAStatusFailure);
+            // ready/inProgress (known generated values 3/6) are nonterminal;
+            // retain the request until a terminal response or our timeout.
         });
     };
     // Confirmation callbacks can arrive more than once; dispatch handle only once.
     __block BOOL handleDispatched = NO;
-    SRAProbeDirectConnection(^(BOOL reachable, int error, uint32_t stage) {
-        if (!SRABusy || SRAActiveRequest != request) return;
-        // Publish before the terminal status; SpringBoard reads both together.
-        uint64_t diagnostic = ((uint64_t)stage << 32) | (uint32_t)MAX(error, 0);
-        notify_set_state(SRADiagnosticToken, diagnostic);
-        if (!reachable) { SRAFinish(SRAStatusDirectUnavailable); return; }
-        ((void (*)(id, SEL, id, id))objc_msgSend)(handler, confirm, intent, ^(id response) {
+    // Native SideStore owns online preparation, cellular toggling and endpoint checks.
+    // A preflight TCP probe here would block that sequence before it starts.
+    ((void (*)(id, SEL, id, id))objc_msgSend)(handler, confirm, intent, ^(id response) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (!SRABusy || SRAActiveRequest != request || handleDispatched) return;
-                handleDispatched = YES;
                 SEL codeSelector = NSSelectorFromString(@"code");
                 if (![response respondsToSelector:codeSelector]) { SRAFinish(SRAStatusUnconfirmed); return; }
                 NSInteger code = ((NSInteger (*)(id, SEL))objc_msgSend)(response, codeSelector);
-                if (code >= 5) { SRAFinish(SRAStatusFailure); return; }
+                if (code == 5) { handleDispatched = YES; SRAFinish(SRAStatusFailure); return; }
+                if (code != 3) return; // Wait for the terminal .ready confirmation.
+                handleDispatched = YES;
                 ((void (*)(id, SEL, id, id))objc_msgSend)(handler, handle, intent, handled);
             });
-        });
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 180 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if (SRABusy && SRAActiveRequest == request) SRAFinish(SRAStatusUnconfirmed);
@@ -119,7 +115,6 @@ static void SRAStartRequest(NSDate *slot) {
             SRAWrite(@"lastStatus", @(SRAStatusLocked));
         return;
     }
-    SRAStartRelayServer();
     uint64_t request = (uint64_t)(NSDate.date.timeIntervalSince1970 * 1000);
     SRAStarted = NSDate.date;
     SRAWrite(@"lastStatus", @(SRAStatusRequested));
@@ -162,10 +157,6 @@ static void SRATick(void) {
 }
 __attribute__((constructor)) static void SRAInitialize(void) {
     SRABackground = UIBackgroundTaskInvalid;
-    @autoreleasepool {
-        if (SRAIsSideStoreProcess())
-            SRAInstallDirectConnection();
-    }
     os_log(SRALog(), "ApelinLoaded %{public}s", APELIN_BUILD_ID);
     dispatch_async(dispatch_get_main_queue(), ^{
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
@@ -173,7 +164,7 @@ __attribute__((constructor)) static void SRAInitialize(void) {
         notify_register_check(SRA_REQUEST, &SRARequestToken);
         notify_register_check(SRA_DIAGNOSTIC, &SRADiagnosticToken);
         if (springboard) {
-            SRAStartRelayServer();
+            SRAStartCellularController();
             notify_register_dispatch(SRA_STATUS, &SRAStatusToken, dispatch_get_main_queue(), ^(int token) {
                 uint64_t status = 0; notify_get_state(token, &status);
                 if (status == SRAStatusDirectUnavailable) {
@@ -193,6 +184,7 @@ __attribute__((constructor)) static void SRAInitialize(void) {
             [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationSignificantTimeChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { SRATick(); }];
             SRATick();
         } else if (SRAIsSideStoreProcess()) {
+            SRAInstallCellularClient();
             notify_register_check(SRA_STATUS, &SRAStatusToken);
             // Observe the same signal with a separate token: keep the state token.
             static int listenerToken;

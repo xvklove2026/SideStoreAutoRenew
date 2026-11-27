@@ -12,6 +12,12 @@
 
 ## 当前状态
 
+0.2.0 工作区改为原生蜂窝流程：编译 Sources/SRACellular.m，停止编译历史直连与中继模块。插件在 SideStore 进程中替换 isCellularRefreshEnabled 和两个快捷指令名称 getter；仅截获内部专用名称的 shortcuts://run-shortcut URL。SpringBoard 使用动态解析的 CTCellularDataPlanGetIsEnabled / SetIsEnabled 执行并轮询确认状态，再返回结果给 SideStore 原生 CellularRefreshManager。保留在线准备、Minimuxer 端点检查及真实配对校验；保留用户 VPN 配置，不代表免 VPN。
+
+恢复保护：只对插件从开启状态关闭的数据取得恢复责任；180 秒看门狗、失败恢复重试、SpringBoard 重启后的持久化标记恢复。恢复期间短暂断网。两个系统符号或 SideStore getter 缺失时应查看日志；当前安装版与参考提交不完全匹配，仍需验证。Darwin 通知不是身份认证通道，当前命名接口仅用于本机进程协作。
+
+当前只通过构建脚本语法检查；本机编译停在 SDKROOT 缺失，尚未进入 Objective-C 编译。0.2.0 尚未云构建、安装或验证真实蜂窝切换、异常恢复、Wi-Fi 跳过及签名有效期。参考原生源码固定为官方提交 0dd743f7，不能视为安装版源码匹配证明。
+
 2026-11-26，0.1.1 的双架构云构建已成功，更新后设置页可正常打开，手动请求可唤起 SideStore，但应用内回环 TCP 探测失败，未进入续签。SideStore 健康检查显示 Minimuxer 未启动、配对文件已加载但连接断开，配置为 Remote Server / 127.0.0.1 / Lockdown。设备外部对回环与设备自身 Wi-Fi 地址的 62078 端口探测均成功，这不证明应用沙盒内连接成功。
 
 0.1.2 尝试在连接配置初始化前选择本机 en0 IPv4 地址，无 Wi-Fi 时保留回环；配置与探测使用同一地址，网络地址变更时要求重启 SideStore，并记录 TCP errno（不记录 IP 或配对数据）。新版仍需安装后验证应用内可达性、Minimuxer 启动、配对及实际签名有效期，尚未证明免 LocalDevVPN 续签成功。

@@ -15,5 +15,5 @@
 <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>下次计划执行</string><key>id</key><string>next</string><key>footerText</key><string>未启用或未选择星期</string></dict>
 <dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>立即续签一次</string><key>action</key><string>runNow</string></dict>
 <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>最近执行状态</string><key>id</key><string>status</string><key>footerText</key><string>尚无执行记录</string></dict>
-<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>点击右上角刷新查看最新状态。调用的是 SideStore 自己的刷新全部：插件尝试本机直连，无需启动 LocalDevVPN；账号和配对文件仍由 SideStore 管理。直连兼容性待实测。返回成功不代表已核对签名有效期，请在 SideStore 的我的应用中确认。失败后本轮不自动重复，请手动检查后重试。</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>点击右上角刷新查看最新状态。使用 SideStore 原生刷新流程与现有 VPN 配置。蜂窝模式中，插件代替 TurnOffData / TurnOnData 快捷指令，由系统进程切换并确认蜂窝状态；180 秒保护恢复及系统进程重启恢复用于处理异常中断。仅恢复插件原本关闭的数据。需要此版本 SideStore 的原生蜂窝接口；兼容性与实际续签待实测。返回成功后仍请在我的应用核对签名有效期。</string></dict>
 </array></dict></plist>
