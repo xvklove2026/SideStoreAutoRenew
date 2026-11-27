@@ -72,6 +72,12 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 
 0.1.3 工作区修补：连接地址选择从仅 en0 扩展为 en0 优先、pdp_ip* 蜂窝接口回退；仍不持久化改写 SideStore 配置，保留配对和服务校验。每次探测重新枚举当前地址并要求与启动时一致，网络切换后需重启 SideStore。尚未云构建、安装或验证蜂窝续签。
 
+## 自动切换网络（0.1.4，待安装验证）
+
+每次新建本机服务连接时重新枚举 en0 / pdp_ip*，Wi-Fi 优先、蜂窝回退。SideStore 启动时缓存的地址仅作中继识别入口；实际目标使用当次选中的本机地址，并由 SpringBoard 再校验其属于当前接口。续签前探测不再因启动地址变化而要求重启。未重复安装 hook，未调用未经确认的 Swift 私有重置接口。
+
+此逻辑在下一次新建连接时生效，不迁移正在使用的 TCP/TLS 会话，也不自动重放刷新请求。网络切换期间的已有会话可能失败；后端是否自行重连、IPv4 缺失的蜂窝网络、双向切换和真实签名有效期均需设备验证。
+
 ## 构建和安装
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
 编译需注册的兼容工具链与 SDK，脚本使用构建提供的 SDKROOT、APELIN_* 变量，不持久化 bootstrap 实际路径。

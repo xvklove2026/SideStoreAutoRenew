@@ -66,6 +66,10 @@ static NSString *SRALocalDeviceAddress(BOOL *usingWiFi) {
     return host;
 }
 
+NSString *SRACurrentDeviceHost(void) {
+    return SRALocalDeviceAddress(NULL);
+}
+
 extern void MSHookMessageEx(Class cls, SEL selector, IMP replacement, IMP *original);
 static BOOL (*SRAOriginalBool)(id, SEL, NSString *);
 static NSString *(*SRAOriginalString)(id, SEL, NSString *);
@@ -112,13 +116,11 @@ void SRAProbeDirectConnection(void (^completion)(BOOL reachable, int error, uint
         BOOL usingWiFi = NO;
         int failure = 0;
         uint32_t stage = SRAConnectionStageAddress;
-        NSString *host = SRADirectHost ?: @"127.0.0.1";
-        NSString *current = SRALocalDeviceAddress(&usingWiFi) ?: @"127.0.0.1";
-        // ConnectionConfig caches its address. Never probe a different address
-        // and then claim that the backend's cached connection is usable.
-        if (![current isEqualToString:host]) {
-            os_log_error(SRALog(), "Local interface changed; relaunch SideStore before retrying");
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, EADDRNOTAVAIL, SRAConnectionStageAddress); });
+        NSString *host = SRALocalDeviceAddress(&usingWiFi);
+        // The relay translates the cached startup address for every new socket.
+        // Probe that same live destination, without mutating Swift singletons.
+        if (!host) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, ENETUNREACH, SRAConnectionStageAddress); });
             return;
         }
         stage = SRAConnectionStageSocket;

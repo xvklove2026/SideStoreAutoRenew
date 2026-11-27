@@ -51,7 +51,7 @@ PLIST
 cat > "$stage/DEBIAN/control" <<CONTROL
 Package: local.apelin.sidestore.autorenew
 Name: SideStore Auto Renew
-Version: 0.1.3
+Version: 0.1.4
 Architecture: $APELIN_ARCHITECTURE
 Description: Schedule SideStore refresh with selectable weekdays and local time.
 Maintainer: SideStore Auto Renew Project

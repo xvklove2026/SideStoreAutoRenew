@@ -1,4 +1,5 @@
 #import "SRARelay.h"
+#import "SRADirect.h"
 #import "SRACommon.h"
 #import <objc/message.h>
 #import <dlfcn.h>
@@ -314,7 +315,21 @@ void SRAStartRelayServer(void) {
 static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t length) {
     if (!address || length < sizeof(struct sockaddr_in) || address->sa_family != AF_INET) return SRAOriginalConnect(fd, address, length);
     const struct sockaddr_in *target = (const struct sockaddr_in *)address;
-    if ((target->sin_addr.s_addr != SRARelayHost && target->sin_addr.s_addr != htonl(INADDR_LOOPBACK)) || !SRAPortAllowed(ntohs(target->sin_port))) return SRAOriginalConnect(fd, address, length);
+    if (!SRAPortAllowed(ntohs(target->sin_port))) return SRAOriginalConnect(fd, address, length);
+    int incomingError = errno;
+    NSString *currentHost = SRACurrentDeviceHost();
+    struct in_addr currentAddress = {0};
+    BOOL haveCurrent = currentHost && inet_pton(AF_INET, currentHost.UTF8String, &currentAddress) == 1;
+    // Match the backend's cached startup address as well as the live address.
+    // Only the physical destination changes; the socket itself is preserved.
+    if (target->sin_addr.s_addr != SRARelayHost &&
+        target->sin_addr.s_addr != htonl(INADDR_LOOPBACK) &&
+        (!haveCurrent || target->sin_addr.s_addr != currentAddress.s_addr)) {
+        errno = incomingError;
+        return SRAOriginalConnect(fd, address, length);
+    }
+    if (!haveCurrent) { errno = ENETUNREACH; return -1; }
+    errno = incomingError;
     int type = 0; socklen_t typeSize = sizeof(type);
     if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &typeSize) != 0 || type != SOCK_STREAM) return SRAOriginalConnect(fd, address, length);
     // Never introduce a blocking IPC handshake on the app's main thread.
@@ -346,7 +361,9 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
     SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, 0);
     if (SRAOriginalConnect(peer, (struct sockaddr *)&endpoint, endpoint.sun_len) != 0) error = errno;
     if (!error) stage = "ipc-request";
-    SRAOpen request = { .magic = htonl(SRARelayMagic), .port = target->sin_port, .reserved = 0, .host = SRARelayHost };
+    os_log(SRALog(), "Local relay route translated=%d build=%{public}s",
+           target->sin_addr.s_addr != currentAddress.s_addr, APELIN_BUILD_ID);
+    SRAOpen request = { .magic = htonl(SRARelayMagic), .port = target->sin_port, .reserved = 0, .host = currentAddress.s_addr };
     if (!error) {
         struct iovec vector = { .iov_base = &request, .iov_len = sizeof(request) };
         union { struct cmsghdr alignment; char bytes[CMSG_SPACE(sizeof(int))]; } control = {0};
