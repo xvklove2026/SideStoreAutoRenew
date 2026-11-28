@@ -95,7 +95,7 @@
     NSInteger code = [SRARead(@"lastRefreshCode", @(-1)) integerValue];
     NSTimeInterval phaseTime = [SRARead(@"lastPhaseTime", @0) doubleValue];
     NSString *phaseText = SRARefreshPhaseText(phaseValue);
-    if (phaseValue == SRARefreshPhaseConfirmed || phaseValue == SRARefreshPhaseHandled)
+    if (phaseValue == SRARefreshPhaseConfirmed || phaseValue == SRARefreshPhaseHandled || phaseValue == SRARefreshPhaseUnrecognizedResponse)
         phaseText = [phaseText stringByAppendingFormat:@"，返回码 %ld", (long)code];
     if (phaseTime > 0) {
         NSDateFormatter *phaseFormatter = [[NSDateFormatter alloc] init];

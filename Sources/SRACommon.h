@@ -21,7 +21,8 @@ typedef NS_ENUM(uint32_t, SRARefreshPhase) {
     SRARefreshPhaseHandling,
     SRARefreshPhaseHandled,
     SRARefreshPhaseUnsupported,
-    SRARefreshPhaseTimedOut
+    SRARefreshPhaseTimedOut,
+    SRARefreshPhaseUnrecognizedResponse
 };
 static inline NSString *SRARefreshPhaseText(uint32_t phase) {
     switch (phase) {
@@ -32,6 +33,7 @@ static inline NSString *SRARefreshPhaseText(uint32_t phase) {
         case SRARefreshPhaseHandled: return @"已收到刷新回调";
         case SRARefreshPhaseUnsupported: return @"刷新类或处理接口未就绪";
         case SRARefreshPhaseTimedOut: return @"SideStore 操作超时或后台执行结束";
+        case SRARefreshPhaseUnrecognizedResponse: return @"SideStore 已返回结果，code 5 的含义待核对；请查看应用中的错误提示";
         default: return @"等待 SideStore 接收请求";
     }
 }
@@ -44,7 +46,7 @@ typedef NS_ENUM(uint64_t, SRAStatus) {
     SRAStatusIdle = 0, SRAStatusRequested, SRAStatusRunning,
     SRAStatusResponseSuccess, SRAStatusFailure, SRAStatusUnconfirmed,
     SRAStatusUnsupported, SRAStatusLocked, SRAStatusOpenFailed,
-    SRAStatusDirectUnavailable
+    SRAStatusDirectUnavailable, SRAStatusUnrecognizedResponse
 };
 // Diagnostic wire format: stage in the high 32 bits, errno in the low 32.
 // Legacy builds sent errno alone, which decodes to the unknown stage.
@@ -115,6 +117,7 @@ static inline NSString *SRAStatusText(uint64_t status) {
         case SRAStatusResponseSuccess: return @"SideStore 返回成功；请到我的应用核对签名有效期";
         case SRAStatusFailure: return @"SideStore 返回失败，请检查其错误提示、登录和配对文件";
         case SRAStatusDirectUnavailable: return @"本机设备通道不可达，尚未开始续签";
+        case SRAStatusUnrecognizedResponse: return @"SideStore 返回未识别结果；请查看应用中的错误提示并核对签名有效期";
         case SRAStatusUnconfirmed: return @"未确认续签完成，请到 SideStore 核对有效期";
         case SRAStatusUnsupported: return @"此版本的续签接口或插件注入未就绪";
         case SRAStatusLocked: return @"等待解锁后执行；过期超过 24 小时的任务跳过";

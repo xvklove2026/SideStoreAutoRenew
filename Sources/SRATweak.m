@@ -16,7 +16,8 @@ static void SRAPublishPhase(SRARefreshPhase phase, NSInteger code) {
 // unspecified=0, ready=1, inProgress=2, success=3, failure=4.
 typedef NS_ENUM(NSInteger, SRAIntentCode) {
     SRAIntentReady = 1, SRAIntentInProgress = 2,
-    SRAIntentSuccess = 3, SRAIntentFailure = 4
+    SRAIntentSuccess = 3, SRAIntentFailure = 4,
+    SRAIntentUnrecognizedFive = 5
 };
 static BOOL SRABusy;
 static uint64_t SRAHandled;
@@ -88,6 +89,10 @@ static void SRAHandleRequest(void) {
             // SideStore may report optimistic success before expiry is verified.
             if (code == SRAIntentSuccess) SRAFinish(SRAStatusResponseSuccess);
             else if (code == SRAIntentFailure) SRAFinish(SRAStatusFailure);
+            else if (code == SRAIntentUnrecognizedFive) {
+                SRAPublishPhase(SRARefreshPhaseUnrecognizedResponse, code);
+                SRAFinish(SRAStatusUnrecognizedResponse);
+            }
             // ready/inProgress are nonterminal; retain until timeout or terminal response.
         });
     };
@@ -103,6 +108,12 @@ static void SRAHandleRequest(void) {
                 if (![response respondsToSelector:codeSelector]) { SRAFinish(SRAStatusUnconfirmed); return; }
                 NSInteger code = ((NSInteger (*)(id, SEL))objc_msgSend)(response, codeSelector);
                 SRAPublishPhase(SRARefreshPhaseConfirmed, code);
+                if (code == SRAIntentUnrecognizedFive) {
+                    handleDispatched = YES;
+                    SRAPublishPhase(SRARefreshPhaseUnrecognizedResponse, code);
+                    SRAFinish(SRAStatusUnrecognizedResponse);
+                    return;
+                }
                 if (code == SRAIntentFailure) { handleDispatched = YES; SRAFinish(SRAStatusFailure); return; }
                 if (code != SRAIntentReady) return; // Wait for .ready before handle().
                 handleDispatched = YES;
