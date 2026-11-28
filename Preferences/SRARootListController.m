@@ -90,6 +90,23 @@
     }
     [status setProperty:statusText forKey:@"footerText"];
     if (status) [self reloadSpecifier:status];
+    PSSpecifier *phase = [self specifierForID:@"phase"];
+    uint32_t phaseValue = [SRARead(@"lastRefreshPhase", @0) unsignedIntValue];
+    NSInteger code = [SRARead(@"lastRefreshCode", @(-1)) integerValue];
+    NSTimeInterval phaseTime = [SRARead(@"lastPhaseTime", @0) doubleValue];
+    NSString *phaseText = SRARefreshPhaseText(phaseValue);
+    if (phaseValue == SRARefreshPhaseConfirmed || phaseValue == SRARefreshPhaseHandled)
+        phaseText = [phaseText stringByAppendingFormat:@"，返回码 %ld", (long)code];
+    if (phaseTime > 0) {
+        NSDateFormatter *phaseFormatter = [[NSDateFormatter alloc] init];
+        phaseFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+        phaseFormatter.dateFormat = @"HH:mm:ss";
+        phaseText = [phaseText stringByAppendingFormat:@"\n时间：%@", [phaseFormatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:phaseTime]]];
+    }
+    if (phase) {
+        [phase setProperty:phaseText forKey:@"footerText"];
+        [self reloadSpecifier:phase];
+    }
 }
 - (void)showTimePicker {
     SRATimeController *controller = [[SRATimeController alloc] init];
@@ -107,7 +124,7 @@
     [self presentViewController:navigation animated:YES completion:nil];
 }
 - (void)runNow {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"立即续签" message:@"将打开 SideStore 并调用刷新全部。插件会先检测本机直连通道；仍需有效的 SideStore 账号和配对文件。" preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"立即续签" message:@"将打开 SideStore 并调用原生刷新全部流程。仍需有效的 SideStore 账号、配对文件及可用的连接配置；执行后可刷新查看阶段诊断。" preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"执行" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { notify_post(SRA_MANUAL); }]];
     [self presentViewController:alert animated:YES completion:nil];

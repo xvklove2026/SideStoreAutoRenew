@@ -15,5 +15,6 @@
 <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>下次计划执行</string><key>id</key><string>next</string><key>footerText</key><string>未启用或未选择星期</string></dict>
 <dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>立即续签一次</string><key>action</key><string>runNow</string></dict>
 <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>最近执行状态</string><key>id</key><string>status</string><key>footerText</key><string>尚无执行记录</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>SideStore 阶段诊断</string><key>id</key><string>phase</string><key>footerText</key><string>等待 SideStore 接收请求</string></dict>
 <dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>点击右上角刷新查看最新状态。使用 SideStore 原生刷新流程与现有 VPN 配置。蜂窝网络仅在 SideStore 刷新策略判断中按 Wi‑Fi 处理，不修改蜂窝数据开关，也不调用快捷指令；实际 Minimuxer、配对和签名有效期仍需核对。</string></dict>
 </array></dict></plist>

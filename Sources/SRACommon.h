@@ -9,6 +9,32 @@
 #define SRA_CHANGED SRA_DOMAIN "/changed"
 #define SRA_MANUAL SRA_DOMAIN "/manual"
 #define SRA_DIAGNOSTIC SRA_DOMAIN "/diagnostic"
+#define SRA_PHASE SRA_DOMAIN "/phase"
+
+// Separate from legacy connection diagnostics: high 32 bits response code,
+// low 32 bits refresh phase. No account or pairing data is transmitted.
+typedef NS_ENUM(uint32_t, SRARefreshPhase) {
+    SRARefreshPhaseWaiting = 0,
+    SRARefreshPhaseReceived,
+    SRARefreshPhaseConfirming,
+    SRARefreshPhaseConfirmed,
+    SRARefreshPhaseHandling,
+    SRARefreshPhaseHandled,
+    SRARefreshPhaseUnsupported,
+    SRARefreshPhaseTimedOut
+};
+static inline NSString *SRARefreshPhaseText(uint32_t phase) {
+    switch (phase) {
+        case SRARefreshPhaseReceived: return @"SideStore 已收到请求";
+        case SRARefreshPhaseConfirming: return @"已调用确认接口，等待回调";
+        case SRARefreshPhaseConfirmed: return @"已收到确认回调";
+        case SRARefreshPhaseHandling: return @"已调用刷新接口，等待回调";
+        case SRARefreshPhaseHandled: return @"已收到刷新回调";
+        case SRARefreshPhaseUnsupported: return @"刷新类或处理接口未就绪";
+        case SRARefreshPhaseTimedOut: return @"SideStore 操作超时或后台执行结束";
+        default: return @"等待 SideStore 接收请求";
+    }
+}
 #ifndef APELIN_BUILD_ID
 #define APELIN_BUILD_ID "unbuilt"
 #endif

@@ -5,7 +5,13 @@
 #import "SRACommon.h"
 #import "SRACellular.h"
 
-static int SRARequestToken, SRAStatusToken, SRADiagnosticToken;
+static int SRARequestToken, SRAStatusToken, SRADiagnosticToken, SRAPhaseToken;
+static void SRAPublishPhase(SRARefreshPhase phase, NSInteger code) {
+    uint64_t value = ((uint64_t)(uint32_t)(int32_t)code << 32) | phase;
+    notify_set_state(SRAPhaseToken, value);
+    notify_post(SRA_PHASE);
+    os_log(SRALog(), "Refresh phase=%u code=%ld build=%{public}s", (unsigned)phase, (long)code, APELIN_BUILD_ID);
+}
 static BOOL SRABusy;
 static uint64_t SRAHandled;
 static NSDate *SRAStarted;
@@ -43,24 +49,27 @@ static void SRAHandleRequest(void) {
     SRAHandled = request;
     [NSUserDefaults.standardUserDefaults setObject:@(request) forKey:@"SRAAutoRenew.lastRequest"];
     SRAActiveRequest = request;
+    SRAPublishPhase(SRARefreshPhaseReceived, -1);
     Class intentClass = NSClassFromString(@"RefreshAllIntent");
     if (!intentClass) intentClass = NSClassFromString(@"SideStore.RefreshAllIntent");
-    if (!intentClass) { SRAReport(SRAStatusUnsupported); return; }
+    if (!intentClass) { SRAPublishPhase(SRARefreshPhaseUnsupported, -1); SRAReport(SRAStatusUnsupported); return; }
     id intent = [[intentClass alloc] init];
     id<UIApplicationDelegate> delegate = UIApplication.sharedApplication.delegate;
     if (![delegate respondsToSelector:@selector(application:handlerForIntent:)]) {
-        SRAReport(SRAStatusUnsupported); return;
+        SRAPublishPhase(SRARefreshPhaseUnsupported, -1); SRAReport(SRAStatusUnsupported); return;
     }
     id handler = [delegate application:UIApplication.sharedApplication handlerForIntent:intent];
     SEL confirm = NSSelectorFromString(@"confirmRefreshAll:completion:");
     SEL handle = NSSelectorFromString(@"handleRefreshAll:completion:");
     if (![handler respondsToSelector:confirm] || ![handler respondsToSelector:handle]) {
-        SRAReport(SRAStatusUnsupported); return;
+        SRAPublishPhase(SRARefreshPhaseUnsupported, -1); SRAReport(SRAStatusUnsupported); return;
     }
     SRABusy = YES; SRAIntent = intent; SRAHandler = handler;
     SRAReport(SRAStatusRunning);
     SRABackground = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"SRARefreshAll" expirationHandler:^{
-        if (SRABusy && SRAActiveRequest == request) SRAFinish(SRAStatusUnconfirmed);
+        if (SRABusy && SRAActiveRequest == request) {
+            SRAFinish(SRAStatusUnconfirmed);
+        }
     }];
     // Retain the actual operation inputs independently of the global timeout state.
     void (^handled)(id) = ^(id response) {
@@ -69,6 +78,7 @@ static void SRAHandleRequest(void) {
             SEL codeSelector = NSSelectorFromString(@"code");
             if (![response respondsToSelector:codeSelector]) { SRAFinish(SRAStatusUnconfirmed); return; }
             NSInteger code = ((NSInteger (*)(id, SEL))objc_msgSend)(response, codeSelector);
+            SRAPublishPhase(SRARefreshPhaseHandled, code);
             // SiriKit generated codes: success=4, failure=5. A success may be
             // optimistic in SideStore: never represent it as verified expiry.
             if (code == 4) SRAFinish(SRAStatusResponseSuccess);
@@ -81,20 +91,25 @@ static void SRAHandleRequest(void) {
     __block BOOL handleDispatched = NO;
     // Native SideStore owns online preparation, cellular toggling and endpoint checks.
     // A preflight TCP probe here would block that sequence before it starts.
+    SRAPublishPhase(SRARefreshPhaseConfirming, -1);
     ((void (*)(id, SEL, id, id))objc_msgSend)(handler, confirm, intent, ^(id response) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (!SRABusy || SRAActiveRequest != request || handleDispatched) return;
                 SEL codeSelector = NSSelectorFromString(@"code");
                 if (![response respondsToSelector:codeSelector]) { SRAFinish(SRAStatusUnconfirmed); return; }
                 NSInteger code = ((NSInteger (*)(id, SEL))objc_msgSend)(response, codeSelector);
+                SRAPublishPhase(SRARefreshPhaseConfirmed, code);
                 if (code == 5) { handleDispatched = YES; SRAFinish(SRAStatusFailure); return; }
                 if (code != 3) return; // Wait for the terminal .ready confirmation.
                 handleDispatched = YES;
+                SRAPublishPhase(SRARefreshPhaseHandling, code);
                 ((void (*)(id, SEL, id, id))objc_msgSend)(handler, handle, intent, handled);
             });
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 180 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        if (SRABusy && SRAActiveRequest == request) SRAFinish(SRAStatusUnconfirmed);
+        if (SRABusy && SRAActiveRequest == request) {
+            SRAFinish(SRAStatusUnconfirmed);
+        }
     });
 }
 
@@ -117,6 +132,10 @@ static void SRAStartRequest(NSDate *slot) {
     uint64_t request = (uint64_t)(NSDate.date.timeIntervalSince1970 * 1000);
     SRAStarted = NSDate.date;
     SRAWrite(@"lastStatus", @(SRAStatusRequested));
+    SRAWrite(@"lastRefreshPhase", @(SRARefreshPhaseWaiting));
+    SRAWrite(@"lastRefreshCode", @(-1));
+    SRAWrite(@"lastPhaseTime", @(NSDate.date.timeIntervalSince1970));
+    notify_set_state(SRAPhaseToken, ((uint64_t)UINT32_MAX << 32) | SRARefreshPhaseWaiting);
     SRAWrite(@"lastConnectionError", nil);
     SRAWrite(@"lastConnectionStage", nil);
     notify_set_state(SRADiagnosticToken, 0);
@@ -162,7 +181,15 @@ __attribute__((constructor)) static void SRAInitialize(void) {
         BOOL springboard = [bundle isEqualToString:@"com.apple.springboard"];
         notify_register_check(SRA_REQUEST, &SRARequestToken);
         notify_register_check(SRA_DIAGNOSTIC, &SRADiagnosticToken);
+        notify_register_check(SRA_PHASE, &SRAPhaseToken);
         if (springboard) {
+            static int phaseListener;
+            notify_register_dispatch(SRA_PHASE, &phaseListener, dispatch_get_main_queue(), ^(int token) {
+                uint64_t phase = 0; notify_get_state(SRAPhaseToken, &phase);
+                SRAWrite(@"lastRefreshPhase", @((uint32_t)phase));
+                SRAWrite(@"lastRefreshCode", @((int32_t)(phase >> 32)));
+                SRAWrite(@"lastPhaseTime", @(NSDate.date.timeIntervalSince1970));
+            });
             notify_register_dispatch(SRA_STATUS, &SRAStatusToken, dispatch_get_main_queue(), ^(int token) {
                 uint64_t status = 0; notify_get_state(token, &status);
                 if (status == SRAStatusDirectUnavailable) {
