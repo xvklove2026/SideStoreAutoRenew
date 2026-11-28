@@ -22,10 +22,14 @@ typedef NS_ENUM(uint32_t, SRARefreshPhase) {
     SRARefreshPhaseHandled,
     SRARefreshPhaseUnsupported,
     SRARefreshPhaseTimedOut,
-    SRARefreshPhaseUnrecognizedResponse
+    SRARefreshPhaseUnrecognizedResponse,
+    SRARefreshPhaseLaunchWaiting,
+    SRARefreshPhaseLaunchTimedOut
 };
 static inline NSString *SRARefreshPhaseText(uint32_t phase) {
     switch (phase) {
+        case SRARefreshPhaseLaunchWaiting: return @"等待 SideStore 前台稳定 12 秒（不代表设备通道已就绪）";
+        case SRARefreshPhaseLaunchTimedOut: return @"60 秒内未获得稳定前台，未调用刷新接口";
         case SRARefreshPhaseReceived: return @"SideStore 已收到请求";
         case SRARefreshPhaseConfirming: return @"已调用确认接口，等待回调";
         case SRARefreshPhaseConfirmed: return @"已收到确认回调";

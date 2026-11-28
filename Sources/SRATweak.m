@@ -27,6 +27,22 @@ static id SRAIntent;
 static id SRAHandler;
 static NSTimer *SRATimer;
 static uint64_t SRAActiveRequest;
+static NSTimeInterval SRAForegroundSince;
+static uint64_t SRAWaitingRequest;
+static NSTimeInterval SRAWaitStarted;
+static BOOL SRAWaitScheduled;
+static void SRAHandleRequest(void);
+
+// A foreground grace period prevents calling the intent during cold launch.
+// This is a timing guard, not proof that Minimuxer or its tunnel is ready.
+static void SRARetryAfterLaunch(void) {
+    if (SRAWaitScheduled) return;
+    SRAWaitScheduled = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        SRAWaitScheduled = NO;
+        SRAHandleRequest();
+    });
+}
 
 static BOOL SRAIsSideStoreProcess(void) {
     // Match the executable selected by our injection filter, independent of signing ID.
@@ -53,6 +69,29 @@ static void SRAHandleRequest(void) {
     NSTimeInterval age = NSDate.date.timeIntervalSince1970 - request / 1000.0;
     uint64_t persisted = (uint64_t)[[NSUserDefaults.standardUserDefaults objectForKey:@"SRAAutoRenew.lastRequest"] unsignedLongLongValue];
     if (!request || request <= MAX(SRAHandled, persisted) || age < -60 || age > 600 || SRABusy) return;
+    NSTimeInterval uptime = NSProcessInfo.processInfo.systemUptime;
+    if (SRAWaitingRequest != request) {
+        SRAWaitingRequest = request;
+        SRAWaitStarted = uptime;
+        SRAPublishPhase(SRARefreshPhaseLaunchWaiting, -1);
+    }
+    UIApplication *application = UIApplication.sharedApplication;
+    BOOL active = application.applicationState == UIApplicationStateActive;
+    if (active && SRAForegroundSince == 0) SRAForegroundSince = uptime;
+    if (!active) SRAForegroundSince = 0;
+    BOOL settled = active && application.delegate != nil && SRAForegroundSince > 0 &&
+        uptime - SRAForegroundSince >= 12.0;
+    if (!settled) {
+        if (uptime - SRAWaitStarted < 60.0) {
+            SRARetryAfterLaunch();
+            return;
+        }
+        SRAHandled = request;
+        [NSUserDefaults.standardUserDefaults setObject:@(request) forKey:@"SRAAutoRenew.lastRequest"];
+        SRAPublishPhase(SRARefreshPhaseLaunchTimedOut, -1);
+        SRAReport(SRAStatusUnconfirmed);
+        return;
+    }
     SRAHandled = request;
     [NSUserDefaults.standardUserDefaults setObject:@(request) forKey:@"SRAAutoRenew.lastRequest"];
     SRAActiveRequest = request;
@@ -229,7 +268,13 @@ __attribute__((constructor)) static void SRAInitialize(void) {
             // Observe the same signal with a separate token: keep the state token.
             static int listenerToken;
             notify_register_dispatch(SRA_REQUEST, &listenerToken, dispatch_get_main_queue(), ^(int token) { SRAHandleRequest(); });
-            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { SRAHandleRequest(); }];
+            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+                SRAForegroundSince = NSProcessInfo.processInfo.systemUptime;
+                SRAHandleRequest();
+            }];
+            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+                SRAForegroundSince = 0;
+            }];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ SRAHandleRequest(); });
         }
     });
