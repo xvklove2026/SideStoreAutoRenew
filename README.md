@@ -12,11 +12,11 @@
 
 ## 当前状态
 
-0.2.0 工作区改为原生蜂窝流程：编译 Sources/SRACellular.m，停止编译历史直连与中继模块。插件在 SideStore 进程中替换 isCellularRefreshEnabled 和两个快捷指令名称 getter；仅截获内部专用名称的 shortcuts://run-shortcut URL。SpringBoard 使用动态解析的 CTCellularDataPlanGetIsEnabled / SetIsEnabled 执行并轮询确认状态，再返回结果给 SideStore 原生 CellularRefreshManager。保留在线准备、Minimuxer 端点检查及真实配对校验；保留用户 VPN 配置，不代表免 VPN。
+0.2.1 工作区先尝试原生蜂窝流程，当前已改为仅在 SideStore 内 hook Network.NWPath.usesInterfaceType(_:)：蜂窝路径对刷新策略报告为 Wi-Fi，不再开关蜂窝数据或调用快捷指令。保留在线准备、Minimuxer 端点检查、真实配对校验和签名有效期核对。
 
-恢复保护：只对插件从开启状态关闭的数据取得恢复责任；180 秒看门狗、失败恢复重试、SpringBoard 重启后的持久化标记恢复。恢复期间短暂断网。两个系统符号或 SideStore getter 缺失时应查看日志；当前安装版与参考提交不完全匹配，仍需验证。Darwin 通知不是身份认证通道，当前命名接口仅用于本机进程协作。
+当前网络策略只在 SideStore 内将纯蜂窝路径用于刷新策略的 Wi-Fi 查询返回为真；不修改蜂窝数据开关，也不调用快捷指令。
 
-当前只通过构建脚本语法检查；本机编译停在 SDKROOT 缺失，尚未进入 Objective-C 编译。0.2.0 尚未云构建、安装或验证真实蜂窝切换、异常恢复、Wi-Fi 跳过及签名有效期。参考原生源码固定为官方提交 0dd743f7，不能视为安装版源码匹配证明。
+当前只通过构建脚本语法检查；本机编译停在 SDKROOT 缺失，尚未进入 Objective‑C 编译。0.2.1 尚未云构建、安装或验证 Wi‑Fi 策略跳过及签名有效期。参考原生源码固定为官方提交 0dd743f7，不能视为安装版源码匹配证明。
 
 2026-11-26，0.1.1 的双架构云构建已成功，更新后设置页可正常打开，手动请求可唤起 SideStore，但应用内回环 TCP 探测失败，未进入续签。SideStore 健康检查显示 Minimuxer 未启动、配对文件已加载但连接断开，配置为 Remote Server / 127.0.0.1 / Lockdown。设备外部对回环与设备自身 Wi-Fi 地址的 62078 端口探测均成功，这不证明应用沙盒内连接成功。
 
@@ -89,7 +89,7 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 编译需注册的兼容工具链与 SDK，脚本使用构建提供的 SDKROOT、APELIN_* 变量，不持久化 bootstrap 实际路径。
 roothide 与 rootless 均编译 arm64 与 arm64e 后合并，并在签名前校验两种切片；设置 bundle 通过 Vendor 的最小 Preferences 声明链接。
 包内安装 tweak、过滤器和 PreferenceLoader 设置入口，依赖 mobilesubstrate、preferenceloader。
-临时包标识 local.apelin.sidestore.autorenew，首次安装前必须由用户确定保留或替换，并同步所有源码与配置。
+包标识已确定为 com.xx.autosidestore，作者和维护者为 xx；包内偏好域为同名标识，设置 bundle 使用 com.xx.autosidestore.preferences。
 
 ## 已做检查
 
@@ -97,7 +97,12 @@ roothide 与 rootless 均编译 arm64 与 arm64e 后合并，并在签名前校�
 - Root.plist 经 icli fs plist 原生解析成功，七个独立星期选项存在。
 - apelin_project_build 失败：SDKROOT 未设置，未到 Objective-C 编译阶段。
 
-## 后续验证
+当前发布版本为 0.2.1，包标识为 com.xx.autosidestore，作者和维护者为 xx。
+
+安装版 SideStore 日志包含 `CellularRefreshManager` 的 `Wi-Fi is active, skipping turnOff shortcut` 分支；主二进制还包含 Swift `Network.NWPath.usesInterfaceType(_:)` 符号。当前 `Sources/SRACellular.m` 仅在 SideStore 进程中 hook 该 Swift 方法：当真实路径只有蜂窝时，让 Wi‑Fi 查询返回 true、蜂窝查询返回 false；实际蜂窝路由、socket、Minimuxer、配对和签名校验不改动。
+
+旧版 `CTCellularDataPlan*`、`shortcuts://run-shortcut` 拦截、SpringBoard 数据恢复看门狗和持久化恢复标记已移除，因此两个蜂窝数据快捷指令不会再被调用。当前源码已通过 `sh -n apelin/build.sh`；本机 `apelin_project_build` 仍在 `SDKROOT` 缺失处停止，尚未取得编译、加载或真实续签证据。Swift mangled symbol 的 arm64 ABI 仍需云构建并在 iOS 16 安装版上实测确认。
+
 
 1. 获得兼容编译环境，处理编译错误和警告并生成构建产物。
 2. 安装并确认 SpringBoard、SideStore 中的构建加载标记。

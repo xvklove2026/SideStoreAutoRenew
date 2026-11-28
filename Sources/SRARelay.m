@@ -290,7 +290,7 @@ static void SRAConfigureRelayServer(void) {
     if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) { close(fd); return; }
     SRAServerFD = fd; SRAServerPath = [path copy]; SRAServerExecutable = [executable copy];
     SRAServerSlots = dispatch_semaphore_create(8);
-    dispatch_queue_t queue = dispatch_queue_create("local.apelin.sidestore.autorenew.relay", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue = dispatch_queue_create("com.xx.autosidestore.relay", DISPATCH_QUEUE_SERIAL);
     SRAServerSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, queue);
     dispatch_source_set_event_handler(SRAServerSource, ^{
         for (;;) {
@@ -309,7 +309,7 @@ static void SRAConfigureRelayServer(void) {
 void SRAStartRelayServer(void) {
     static dispatch_queue_t setup;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ setup = dispatch_queue_create("local.apelin.sidestore.autorenew.relay.setup", DISPATCH_QUEUE_SERIAL); });
+    dispatch_once(&once, ^{ setup = dispatch_queue_create("com.xx.autosidestore.relay.setup", DISPATCH_QUEUE_SERIAL); });
     dispatch_async(setup, ^{ @autoreleasepool { SRAConfigureRelayServer(); } });
 }
 static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t length) {

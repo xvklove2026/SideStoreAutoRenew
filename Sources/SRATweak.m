@@ -2,9 +2,7 @@
 #import <Intents/Intents.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
-#import <dlfcn.h>
 #import "SRACommon.h"
-#import "SRACellular.h"
 
 static int SRARequestToken, SRAStatusToken, SRADiagnosticToken;
 static BOOL SRABusy;
@@ -164,7 +162,6 @@ __attribute__((constructor)) static void SRAInitialize(void) {
         notify_register_check(SRA_REQUEST, &SRARequestToken);
         notify_register_check(SRA_DIAGNOSTIC, &SRADiagnosticToken);
         if (springboard) {
-            SRAStartCellularController();
             notify_register_dispatch(SRA_STATUS, &SRAStatusToken, dispatch_get_main_queue(), ^(int token) {
                 uint64_t status = 0; notify_get_state(token, &status);
                 if (status == SRAStatusDirectUnavailable) {

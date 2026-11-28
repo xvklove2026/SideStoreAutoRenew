@@ -49,13 +49,13 @@ cat > "$stage$APELIN_PREFIX/Library/MobileSubstrate/DynamicLibraries/SRAAutoRene
 <plist version="1.0"><dict><key>Filter</key><dict><key>Executables</key><array><string>SpringBoard</string><string>SideStore</string></array></dict></dict></plist>
 PLIST
 cat > "$stage/DEBIAN/control" <<CONTROL
-Package: local.apelin.sidestore.autorenew
+Package: com.xx.autosidestore
 Name: SideStore Auto Renew
-Version: 0.2.0
+Version: 0.2.1
 Architecture: $APELIN_ARCHITECTURE
 Description: Schedule SideStore refresh with selectable weekdays and local time.
-Maintainer: SideStore Auto Renew Project
-Author: SideStore Auto Renew Project
+Maintainer: xx
+Author: xx
 Section: Tweaks
 Depends: firmware (>= 16.0), mobilesubstrate, preferenceloader
 CONTROL

@@ -3,7 +3,7 @@
 #import <notify.h>
 #import <os/log.h>
 
-#define SRA_DOMAIN "local.apelin.sidestore.autorenew"
+#define SRA_DOMAIN "com.xx.autosidestore"
 #define SRA_REQUEST SRA_DOMAIN "/request"
 #define SRA_STATUS SRA_DOMAIN "/status"
 #define SRA_CHANGED SRA_DOMAIN "/changed"
