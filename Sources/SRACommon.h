@@ -111,7 +111,7 @@ static inline NSDate *SRAScheduledDate(NSDate *now, NSInteger direction, BOOL in
 static inline NSString *SRAStatusText(uint64_t status) {
     switch (status) {
         case SRAStatusRequested: return @"已请求打开 SideStore，等待插件响应";
-        case SRAStatusRunning: return @"已调用刷新全部，等待 SideStore 响应";
+        case SRAStatusRunning: return @"SideStore 正在处理续签请求，具体进度见阶段诊断";
         case SRAStatusResponseSuccess: return @"SideStore 返回成功；请到我的应用核对签名有效期";
         case SRAStatusFailure: return @"SideStore 返回失败，请检查其错误提示、登录和配对文件";
         case SRAStatusDirectUnavailable: return @"本机设备通道不可达，尚未开始续签";

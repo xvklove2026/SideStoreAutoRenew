@@ -12,6 +12,12 @@ static void SRAPublishPhase(SRARefreshPhase phase, NSInteger code) {
     notify_post(SRA_PHASE);
     os_log(SRALog(), "Refresh phase=%u code=%ld build=%{public}s", (unsigned)phase, (long)code, APELIN_BUILD_ID);
 }
+// Xcode custom SiriKit response codes for RefreshAll (Legacy definition):
+// unspecified=0, ready=1, inProgress=2, success=3, failure=4.
+typedef NS_ENUM(NSInteger, SRAIntentCode) {
+    SRAIntentReady = 1, SRAIntentInProgress = 2,
+    SRAIntentSuccess = 3, SRAIntentFailure = 4
+};
 static BOOL SRABusy;
 static uint64_t SRAHandled;
 static NSDate *SRAStarted;
@@ -79,12 +85,10 @@ static void SRAHandleRequest(void) {
             if (![response respondsToSelector:codeSelector]) { SRAFinish(SRAStatusUnconfirmed); return; }
             NSInteger code = ((NSInteger (*)(id, SEL))objc_msgSend)(response, codeSelector);
             SRAPublishPhase(SRARefreshPhaseHandled, code);
-            // SiriKit generated codes: success=4, failure=5. A success may be
-            // optimistic in SideStore: never represent it as verified expiry.
-            if (code == 4) SRAFinish(SRAStatusResponseSuccess);
-            else if (code == 5) SRAFinish(SRAStatusFailure);
-            // ready/inProgress (known generated values 3/6) are nonterminal;
-            // retain the request until a terminal response or our timeout.
+            // SideStore may report optimistic success before expiry is verified.
+            if (code == SRAIntentSuccess) SRAFinish(SRAStatusResponseSuccess);
+            else if (code == SRAIntentFailure) SRAFinish(SRAStatusFailure);
+            // ready/inProgress are nonterminal; retain until timeout or terminal response.
         });
     };
     // Confirmation callbacks can arrive more than once; dispatch handle only once.
@@ -99,8 +103,8 @@ static void SRAHandleRequest(void) {
                 if (![response respondsToSelector:codeSelector]) { SRAFinish(SRAStatusUnconfirmed); return; }
                 NSInteger code = ((NSInteger (*)(id, SEL))objc_msgSend)(response, codeSelector);
                 SRAPublishPhase(SRARefreshPhaseConfirmed, code);
-                if (code == 5) { handleDispatched = YES; SRAFinish(SRAStatusFailure); return; }
-                if (code != 3) return; // Wait for the terminal .ready confirmation.
+                if (code == SRAIntentFailure) { handleDispatched = YES; SRAFinish(SRAStatusFailure); return; }
+                if (code != SRAIntentReady) return; // Wait for .ready before handle().
                 handleDispatched = YES;
                 SRAPublishPhase(SRARefreshPhaseHandling, code);
                 ((void (*)(id, SEL, id, id))objc_msgSend)(handler, handle, intent, handled);

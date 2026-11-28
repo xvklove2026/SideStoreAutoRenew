@@ -97,7 +97,9 @@ roothide 与 rootless 均编译 arm64 与 arm64e 后合并，并在签名前校�
 - Root.plist 经 icli fs plist 原生解析成功，七个独立星期选项存在。
 - apelin_project_build 失败：SDKROOT 未设置，未到 Objective-C 编译阶段。
 
-当前发布版本为 0.2.3；工作区诊断版为 0.2.4，包标识为 com.xx.autosidestore，作者和维护者为 xx。
+当前已发布版本为 0.2.4；工作区修复版为 0.2.5，包标识为 com.xx.autosidestore，作者和维护者为 xx。
+
+0.2.4 已在设备上读到确认回调 code=1；旧代码错误等待 code=3。0.2.5 按 Legacy 自定义 SiriKit 响应码处理 ready=1、inProgress=2、success=3、failure=4，并修正提前宣称已调用刷新的状态文字。官方 develop 的 AltStore/Intents/Legacy/IntentHandler.swift 在 confirm() 内就可能启动刷新，confirm 回调交付 .ready 后需调用 handle() 接收后续响应；所以停在确认回调不等于底层刷新从未启动。官方源码只是参考，安装版的后续回调和真实有效期仍需设备测试。
 
 0.2.4 在设置页增加“SideStore 阶段诊断”，显示最近接收请求、调用确认、确认回调、调用刷新和刷新回调的阶段及返回码。每轮请求先清空上一轮阶段；超时保留最后阶段，配合“最近执行状态”判断停在哪一步。Darwin 通知状态可能合并快速连续事件，因此该显示不是完整事件历史。手动执行弹窗已移除过时的直连预检说明。
 
