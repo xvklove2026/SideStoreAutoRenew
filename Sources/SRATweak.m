@@ -270,7 +270,7 @@ __attribute__((constructor)) static void SRAInitialize(void) {
             [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationSignificantTimeChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { SRATick(); }];
             SRATick();
         } else if (SRAIsSideStoreProcess()) {
-            if (!SRAWiFiDirectActive()) SRAInstallCellularClient();
+            SRAInstallCellularClient();
             notify_register_check(SRA_STATUS, &SRAStatusToken);
             // Observe the same signal with a separate token: keep the state token.
             static int listenerToken;
