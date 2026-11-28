@@ -84,11 +84,11 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 
 此逻辑在下一次新建连接时生效，不迁移正在使用的 TCP/TLS 会话，也不自动重放刷新请求。网络切换期间的已有会话可能失败；后端是否自行重连、IPv4 缺失的蜂窝网络、双向切换和真实签名有效期均需设备验证。
 
-## Wi-Fi 直连恢复（待云构建和设备验证）
+## Wi-Fi 无 VPN 修复（0.2.9，待云构建和设备验证）
 
-当前工作区重新编译 `Sources/SRADirect.m`。SideStore 的 dylib 构造阶段若检测到活动 `en0` IPv4 地址，仅在 SideStore 进程内把 `useLocalVPN` 视为关闭、把 `RemoteServerIp` 视为本机 Wi-Fi 地址，并探测该地址的 62078 端口；没有 Wi-Fi 时保持 SideStore 原生连接设置。Wi-Fi 模式下本轮暂不安装 `nw_path_uses_interface_type` 蜂窝分类 hook，以隔离 Wi-Fi 验证；蜂窝逻辑保留给后续处理。该路径不删除已保存的 VPN 配置，也不改变签名校验。
+0.2.8 的实际日志确认配置 hook 已将 SideStore 指向 `en0` 的本机 Wi-Fi 地址，但 SideStore 沙盒内的 `62078` 探测仍 unreachable；独立进程连接成功。复查旧版运行记录发现，当时真正建立 lockdown 和动态服务端口连接的是 SpringBoard/SideStore 本机中继，不是直接连接配置本身。因此 0.2.9 重新将 `Sources/SRARelay.m` 编入构建：SpringBoard 启动并在拉起续签前准备 Unix socket 中继，SideStore 在 Wi-Fi 模式下用原 socket 转发到本机 Wi-Fi 地址；配对数据仍由 SideStore 原流程处理。Wi-Fi 模式下仍不安装蜂窝路径分类 hook。
 
-尚未验证：Wi-Fi 无 VPN 下 SideStore 配置单例是否读取到 hook 后的地址、Minimuxer 是否启动、配对握手和真实签名有效期。由于本机没有可用 SDK/工具链，需要 GitHub Actions 云构建；安装后须重启 SpringBoard 和 SideStore，再先在 Wi-Fi 无 VPN 条件下手动续签。
+待云构建、安装和实测：确认中继 listener ready、`62078` 与动态服务连接成功，Minimuxer 启动、配对握手完成，并在 SideStore 中核实签名有效期实际延长。中继有历史 socket 数据交换记录，但这不等于当前修复已验证，也不证明曾成功续签。
 
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
 编译需注册的兼容工具链与 SDK，脚本使用构建提供的 SDKROOT、APELIN_* 变量，不持久化 bootstrap 实际路径。

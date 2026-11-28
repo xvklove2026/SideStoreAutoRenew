@@ -1,4 +1,5 @@
 #import "SRADirect.h"
+#import "SRARelay.h"
 #import "SRACommon.h"
 #import <objc/runtime.h>
 #import <sys/socket.h>
@@ -19,7 +20,7 @@ static NSString *SRALocalWiFiAddress(void) {
     NSString *host = nil;
     if (getifaddrs(&interfaces) != 0) return nil;
     for (struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
-        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET ||
+        if (!item->ifa_addr || !item->ifa_name || item->ifa_addr->sa_family != AF_INET ||
             !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK) ||
             strcmp(item->ifa_name, "en0") != 0) continue;
         struct sockaddr_in *address = (struct sockaddr_in *)item->ifa_addr;
@@ -33,6 +34,10 @@ static NSString *SRALocalWiFiAddress(void) {
     }
     freeifaddrs(interfaces);
     return host;
+}
+
+NSString *SRACurrentDeviceHost(void) {
+    return SRALocalWiFiAddress();
 }
 
 BOOL SRAWiFiDirectActive(void) {
@@ -75,6 +80,7 @@ void SRAInstallDirectConnection(void) {
                    APELIN_BUILD_ID);
             return;
         }
+        SRAInstallRelayClient(SRADirectHost);
         // Install before SideStore's connection configuration singleton reads its settings.
         MSHookMessageEx(NSUserDefaults.class, @selector(boolForKey:), (IMP)SRAReadBool, (IMP *)&SRAOriginalBool);
         MSHookMessageEx(NSUserDefaults.class, @selector(stringForKey:), (IMP)SRAReadString, (IMP *)&SRAOriginalString);

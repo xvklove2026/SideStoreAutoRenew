@@ -4,6 +4,7 @@
 #import <objc/runtime.h>
 #import "SRACommon.h"
 #import "SRADirect.h"
+#import "SRARelay.h"
 #import "SRACellular.h"
 
 static int SRARequestToken, SRAStatusToken, SRADiagnosticToken, SRAPhaseToken;
@@ -184,6 +185,7 @@ static void SRAStartRequest(NSDate *slot) {
             SRAWrite(@"lastStatus", @(SRAStatusLocked));
         return;
     }
+    SRAStartRelayServer();
     uint64_t request = (uint64_t)(NSDate.date.timeIntervalSince1970 * 1000);
     SRAStarted = NSDate.date;
     SRAWrite(@"lastStatus", @(SRAStatusRequested));
@@ -241,6 +243,7 @@ __attribute__((constructor)) static void SRAInitialize(void) {
         notify_register_check(SRA_DIAGNOSTIC, &SRADiagnosticToken);
         notify_register_check(SRA_PHASE, &SRAPhaseToken);
         if (springboard) {
+            SRAStartRelayServer();
             static int phaseListener;
             notify_register_dispatch(SRA_PHASE, &phaseListener, dispatch_get_main_queue(), ^(int token) {
                 uint64_t phase = 0; notify_get_state(SRAPhaseToken, &phase);
