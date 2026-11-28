@@ -90,7 +90,9 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 
 蜂窝策略续接（0.3.0，待云构建和设备验证）：SideStore 始终安装 Network.framework C 路径分类 hook。它只在系统判定“有蜂窝且无 Wi‑Fi”的纯蜂窝路径上，将刷新策略查询到的 Wi‑Fi 类型报告为 true、蜂窝类型报告为 false；真实 Wi‑Fi（包括 Wi‑Fi 与蜂窝同时可用）逐项返回系统原值。路由、socket、RemoteServerIp、配对和签名校验不变。0.2.9 的 Wi‑Fi 偏好配置和本机中继代码保持不变。必须实测 Wi‑Fi/蜂窝切换，确认实际 Wi‑Fi Health Check 与刷新行为不回归，并确认蜂窝开启时 SideStore 没有真实 Wi‑Fi 时才走策略 hook；绿灯仍不单独证明签名续期成功。
 
-0.3.1 候选（2026-11-28，未编译或设备验证）：18:52 的蜂窝启动日志显示 `.localVPN`、设备端点 nil，8 秒后 Minimuxer 启动失败。源码确认无 en0 时直连配置和中继客户端均未安装；仅修改网络分类不补齐端点。候选改为保持首个有效 en0 IPv4 优先，仅无 en0 时回退到首个活动 pdp_ip* IPv4，让既有配置 hook 和原 socket 中继可在蜂窝冷启动时安装。SRARelay.m 和 SRACellular.m 未修改。蜂窝 IPv4 地址是否可用于 lockdown、多个蜂窝接口的选择、IPv6-only 网络、冷启动后网络切换及真实 Wi-Fi 回归仍待验证；未发现 IPv4 时保持原配置。不能据此宣称蜂窝 Health Check 或续签已修复。
+0.3.1 已公开发布（tag v0.3.1）：Wi-Fi 全绿由用户确认。纯蜂窝冷启动仍失败：SideStore 选到 pdp_ip0 地址 10.42.4.54 并进入 Remote Server，但 62078 TCP probe unreachable；SpringBoard 中继收到原 socket 后连该地址返回 errno 60。独立 mobile 进程连接同地址也超时，pdp_ip0 抓包未见对应 TCP 包；对照 loopback:62078 TCP 握手成功。lockdownd launchd job 为 running 并声明 IPv4/IPv6 62078 sockets。证据更符合蜂窝地址的本机流量未回到本机 listener 的接口/路由行为，尚未做内核级归因。
+
+0.3.2 本地候选（未编译或验证）：SpringBoard 中继对属于活动 pdp_ip* 的设备本机 IPv4，把接收原 socket 的 connect 目标改为 127.0.0.1；传入 socket、目标端口、读写路径和配对数据不变。Wi-Fi 仍按原地址连接。客户端 peer 校验按蜂窝/非蜂窝分别检查回环或原地址，并增加蜂窝回环结果日志。独立 mobile 进程已确认 loopback:62078 可完成 TCP 握手；有效 lockdown plist、动态服务端口、Health Check 和签名续期尚未验证。本机 SDKROOT 缺失，候选无法本地编译，尚未推送或发布。
 
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
 编译需注册的兼容工具链与 SDK，脚本使用构建提供的 SDKROOT、APELIN_* 变量，不持久化 bootstrap 实际路径。

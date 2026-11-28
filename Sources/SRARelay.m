@@ -135,6 +135,21 @@ static BOOL SRAHostIsLocal(in_addr_t host) {
     freeifaddrs(interfaces);
     return found;
 }
+static BOOL SRAHostUsesCellularInterface(in_addr_t host) {
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces) != 0) return NO;
+    BOOL cellular = NO;
+    for (struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
+        if (item->ifa_addr && item->ifa_addr->sa_family == AF_INET && (item->ifa_flags & IFF_UP) &&
+            item->ifa_name && strncmp(item->ifa_name, "pdp_ip", 6) == 0 &&
+            ((struct sockaddr_in *)item->ifa_addr)->sin_addr.s_addr == host) {
+            cellular = YES;
+            break;
+        }
+    }
+    freeifaddrs(interfaces);
+    return cellular;
+}
 static NSString *SRASocketPath(NSString *container) {
     if (!container.length) return nil;
     char resolved[PATH_MAX];
@@ -235,7 +250,14 @@ static void SRAHandlePeer(int peer, NSString *executable) {
             else if (errno != ENOTCONN) error = errno;
         }
         if (!error && !SRAHostIsLocal(request.host)) error = EADDRNOTAVAIL;
-        if (!error && SRAConnectLocal(remote, request.host, ntohs(request.port)) != 0) error = errno;
+        in_addr_t connectHost = request.host;
+        BOOL cellularLoopback = !error && SRAHostUsesCellularInterface(request.host);
+        if (cellularLoopback) connectHost = htonl(INADDR_LOOPBACK);
+        if (!error && SRAConnectLocal(remote, connectHost, ntohs(request.port)) != 0) error = errno;
+        if (cellularLoopback) {
+            os_log(SRALog(), "Local relay cellular loopback port=%u errno=%d build=%{public}s",
+                   (unsigned)ntohs(request.port), error, APELIN_BUILD_ID);
+        }
         uint32_t response = htonl((uint32_t)error);
         BOOL sent = SRAExactIO(peer, &response, sizeof(response), YES);
         os_log(SRALog(), "Local relay original-socket port=%u errno=%d sent=%d build=%{public}s", (unsigned)ntohs(request.port), error, sent, APELIN_BUILD_ID);
@@ -364,6 +386,8 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
     os_log(SRALog(), "Local relay route translated=%d build=%{public}s",
            target->sin_addr.s_addr != currentAddress.s_addr, APELIN_BUILD_ID);
     SRAOpen request = { .magic = htonl(SRARelayMagic), .port = target->sin_port, .reserved = 0, .host = currentAddress.s_addr };
+    BOOL cellularLoopback = SRAHostUsesCellularInterface(request.host);
+    in_addr_t expectedPeer = cellularLoopback ? htonl(INADDR_LOOPBACK) : request.host;
     if (!error) {
         struct iovec vector = { .iov_base = &request, .iov_len = sizeof(request) };
         union { struct cmsghdr alignment; char bytes[CMSG_SPACE(sizeof(int))]; } control = {0};
@@ -390,7 +414,7 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
         stage = "verify-original";
         struct sockaddr_in connected = {0}; socklen_t connectedSize = sizeof(connected);
         if (getpeername(fd, (struct sockaddr *)&connected, &connectedSize) != 0) error = errno;
-        else if (connected.sin_family != AF_INET || connected.sin_addr.s_addr != request.host ||
+        else if (connected.sin_family != AF_INET || connected.sin_addr.s_addr != expectedPeer ||
                  connected.sin_port != target->sin_port) error = EPROTO;
         if (!error && fcntl(fd, F_GETFL, 0) != flags) error = EIO;
         if (!error && fcntl(fd, F_GETFD, 0) != descriptorFlags) error = EIO;
@@ -401,6 +425,10 @@ static int SRARelayConnect(int fd, const struct sockaddr *address, socklen_t len
     }
     os_log(SRALog(), "Local relay connect fd=%d port=%u nonblocking=%d stage=%{public}s errno=%d build=%{public}s", fd, (unsigned)ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error, APELIN_BUILD_ID);
     SRAConsoleRelay(fd, ntohs(target->sin_port), (flags & O_NONBLOCK) != 0, stage, error);
+    if (!error && cellularLoopback) {
+        os_log(SRALog(), "Local relay cellular loopback connected port=%u build=%{public}s",
+               (unsigned)ntohs(target->sin_port), APELIN_BUILD_ID);
+    }
     if (error) { errno = error; return -1; }
     return 0;
 }

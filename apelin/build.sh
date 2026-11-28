@@ -51,7 +51,7 @@ PLIST
 cat > "$stage/DEBIAN/control" <<CONTROL
 Package: com.xx.autosidestore
 Name: SideStore Auto Renew
-Version: 0.3.1
+Version: 0.3.2
 Architecture: $APELIN_ARCHITECTURE
 Description: Schedule SideStore refresh with selectable weekdays and local time.
 Maintainer: xx
