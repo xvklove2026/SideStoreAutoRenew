@@ -3,6 +3,7 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import "SRACommon.h"
+#import "SRACellular.h"
 
 static int SRARequestToken, SRAStatusToken, SRADiagnosticToken;
 static BOOL SRABusy;
