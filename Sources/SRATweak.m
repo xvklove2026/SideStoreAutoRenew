@@ -3,6 +3,7 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import "SRACommon.h"
+#import "SRADirect.h"
 #import "SRACellular.h"
 
 static int SRARequestToken, SRAStatusToken, SRADiagnosticToken, SRAPhaseToken;
@@ -229,6 +230,9 @@ static void SRATick(void) {
 }
 __attribute__((constructor)) static void SRAInitialize(void) {
     SRABackground = UIBackgroundTaskInvalid;
+    if (SRAIsSideStoreProcess()) {
+        SRAInstallDirectConnection();
+    }
     os_log(SRALog(), "ApelinLoaded %{public}s", APELIN_BUILD_ID);
     dispatch_async(dispatch_get_main_queue(), ^{
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
@@ -263,7 +267,7 @@ __attribute__((constructor)) static void SRAInitialize(void) {
             [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationSignificantTimeChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { SRATick(); }];
             SRATick();
         } else if (SRAIsSideStoreProcess()) {
-            SRAInstallCellularClient();
+            if (!SRAWiFiDirectActive()) SRAInstallCellularClient();
             notify_register_check(SRA_STATUS, &SRAStatusToken);
             // Observe the same signal with a separate token: keep the state token.
             static int listenerToken;
