@@ -15,29 +15,32 @@
 static NSString *SRADirectHost;
 static BOOL SRAWiFiDirectEnabled;
 
-static NSString *SRALocalWiFiAddress(void) {
+static NSString *SRALocalEndpointAddress(void) {
     struct ifaddrs *interfaces = NULL;
-    NSString *host = nil;
+    NSString *wifiHost = nil;
+    NSString *cellularHost = nil;
     if (getifaddrs(&interfaces) != 0) return nil;
     for (struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
         if (!item->ifa_addr || !item->ifa_name || item->ifa_addr->sa_family != AF_INET ||
-            !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK) ||
-            strcmp(item->ifa_name, "en0") != 0) continue;
+            !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        BOOL wifi = strcmp(item->ifa_name, "en0") == 0;
+        BOOL cellular = strncmp(item->ifa_name, "pdp_ip", 6) == 0;
+        if (!wifi && !cellular) continue;
         struct sockaddr_in *address = (struct sockaddr_in *)item->ifa_addr;
         uint32_t value = ntohl(address->sin_addr.s_addr);
         if (!value || value >> 24 == 127 || (value >> 16) == 0xa9fe) continue;
         char buffer[INET_ADDRSTRLEN] = {0};
-        if (inet_ntop(AF_INET, &address->sin_addr, buffer, sizeof(buffer))) {
-            host = [NSString stringWithUTF8String:buffer];
-        }
-        if (host) break;
+        if (!inet_ntop(AF_INET, &address->sin_addr, buffer, sizeof(buffer))) continue;
+        NSString *host = [NSString stringWithUTF8String:buffer];
+        if (wifi) { wifiHost = host; break; }
+        if (!cellularHost) cellularHost = host;
     }
     freeifaddrs(interfaces);
-    return host;
+    return wifiHost ?: cellularHost;
 }
 
 NSString *SRACurrentDeviceHost(void) {
-    return SRALocalWiFiAddress();
+    return SRALocalEndpointAddress();
 }
 
 BOOL SRAWiFiDirectActive(void) {
@@ -73,10 +76,10 @@ static id SRAReadObject(id receiver, SEL selector, NSString *key) {
 void SRAInstallDirectConnection(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        SRADirectHost = [SRALocalWiFiAddress() copy];
+        SRADirectHost = [SRALocalEndpointAddress() copy];
         SRAWiFiDirectEnabled = SRADirectHost.length > 0;
         if (!SRAWiFiDirectEnabled) {
-            os_log(SRALog(), "Wi-Fi direct mode inactive; preserving SideStore connection settings build=%{public}s",
+            os_log(SRALog(), "No local Wi-Fi or cellular IPv4 endpoint; preserving SideStore connection settings build=%{public}s",
                    APELIN_BUILD_ID);
             return;
         }
@@ -85,7 +88,7 @@ void SRAInstallDirectConnection(void) {
         MSHookMessageEx(NSUserDefaults.class, @selector(boolForKey:), (IMP)SRAReadBool, (IMP *)&SRAOriginalBool);
         MSHookMessageEx(NSUserDefaults.class, @selector(stringForKey:), (IMP)SRAReadString, (IMP *)&SRAOriginalString);
         MSHookMessageEx(NSUserDefaults.class, @selector(objectForKey:), (IMP)SRAReadObject, (IMP *)&SRAOriginalObject);
-        os_log(SRALog(), "Wi-Fi direct mode enabled; VPN setting overridden only in SideStore host build=%{public}s",
+        os_log(SRALog(), "Local endpoint relay enabled (Wi-Fi preferred, cellular fallback); VPN setting overridden only in SideStore host build=%{public}s",
                APELIN_BUILD_ID);
     });
 }

@@ -90,6 +90,8 @@ Sources/SRARelay.m 新增实验性通道：SpringBoard 在运行时定位 SideSt
 
 蜂窝策略续接（0.3.0，待云构建和设备验证）：SideStore 始终安装 Network.framework C 路径分类 hook。它只在系统判定“有蜂窝且无 Wi‑Fi”的纯蜂窝路径上，将刷新策略查询到的 Wi‑Fi 类型报告为 true、蜂窝类型报告为 false；真实 Wi‑Fi（包括 Wi‑Fi 与蜂窝同时可用）逐项返回系统原值。路由、socket、RemoteServerIp、配对和签名校验不变。0.2.9 的 Wi‑Fi 偏好配置和本机中继代码保持不变。必须实测 Wi‑Fi/蜂窝切换，确认实际 Wi‑Fi Health Check 与刷新行为不回归，并确认蜂窝开启时 SideStore 没有真实 Wi‑Fi 时才走策略 hook；绿灯仍不单独证明签名续期成功。
 
+0.3.1 候选（2026-11-28，未编译或设备验证）：18:52 的蜂窝启动日志显示 `.localVPN`、设备端点 nil，8 秒后 Minimuxer 启动失败。源码确认无 en0 时直连配置和中继客户端均未安装；仅修改网络分类不补齐端点。候选改为保持首个有效 en0 IPv4 优先，仅无 en0 时回退到首个活动 pdp_ip* IPv4，让既有配置 hook 和原 socket 中继可在蜂窝冷启动时安装。SRARelay.m 和 SRACellular.m 未修改。蜂窝 IPv4 地址是否可用于 lockdown、多个蜂窝接口的选择、IPv6-only 网络、冷启动后网络切换及真实 Wi-Fi 回归仍待验证；未发现 IPv4 时保持原配置。不能据此宣称蜂窝 Health Check 或续签已修复。
+
 工作区保留 external 类型，入口 apelin/build.sh。本机通过 apelin_project_build 构建；用户指定的 GitHub Actions 云构建通过 .github/workflows/build.yml 调用同一脚本，使用 macOS Xcode SDK，分别输出 roothide 与 rootless 的 deb 和 SHA-256 校验文件。推送 main 或手动运行工作流即可构建，在 Actions 对应运行的 Artifacts 下载。云端包不属于 Apelin 本机构建产物，需用户通过包管理器安装。
 编译需注册的兼容工具链与 SDK，脚本使用构建提供的 SDKROOT、APELIN_* 变量，不持久化 bootstrap 实际路径。
 roothide 与 rootless 均编译 arm64 与 arm64e 后合并，并在签名前校验两种切片；设置 bundle 通过 Vendor 的最小 Preferences 声明链接。
