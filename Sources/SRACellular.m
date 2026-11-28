@@ -1,51 +1,48 @@
 #import "SRACellular.h"
 #import "SRACommon.h"
 #import <dlfcn.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 extern void MSHookFunction(void *, void *, void **);
 
-// Swift Network.NWPath.usesInterfaceType(_:) from the installed SideStore
-// binary. NWPath carries one opaque path reference on arm64; the network
-// interface type is the next register-sized ABI argument and Bool is returned
-// in w0. The target path performs the real classification first, so we only
-// augment a cellular-only path with the policy's Wi-Fi answer.
-typedef BOOL (*SRAUsesInterfaceTypeIMP)(void *path, uint64_t type);
-static SRAUsesInterfaceTypeIMP SRAOriginalUsesInterfaceType;
+// Hook Network.framework's C entry point instead of the Swift value-type
+// wrapper. Its ABI is nw_path_t + nw_interface_type_t -> bool, which avoids
+// calling NWPath's Swift thunk with an incorrectly guessed struct convention.
+typedef bool (*SRANWPathUsesInterfaceType)(void *path, uint32_t type);
+static SRANWPathUsesInterfaceType SRAOriginalNWPathUsesInterfaceType;
 static unsigned SRAClassificationReports;
-static const char SRAWiFiClassificationSymbol[] =
-    "_$s7Network6NWPathV17usesInterfaceTypeySbAA11NWInterfaceV0dE0OF";
 
-static BOOL SRAUsesInterfaceType(void *path, uint64_t type) {
-    if (!SRAOriginalUsesInterfaceType) return NO;
+static bool SRAHookedNWPathUsesInterfaceType(void *path, uint32_t type) {
+    if (!SRAOriginalNWPathUsesInterfaceType) return false;
 
-    const uint64_t wifiType = 1;
-    const uint64_t cellularType = 2;
-    BOOL cellular = SRAOriginalUsesInterfaceType(path, cellularType);
-    BOOL wifi = SRAOriginalUsesInterfaceType(path, wifiType);
+    const uint32_t wifiType = 1;
+    const uint32_t cellularType = 2;
+    const bool cellular = SRAOriginalNWPathUsesInterfaceType(path, cellularType);
+    const bool wifi = SRAOriginalNWPathUsesInterfaceType(path, wifiType);
     if (cellular && !wifi) {
         if (SRAClassificationReports < 8) {
             SRAClassificationReports++;
             os_log(SRALog(), "Cellular NWPath presented as Wi-Fi to refresh policy; actual path unchanged build=%{public}s",
                    APELIN_BUILD_ID);
         }
-        if (type == wifiType) return YES;
-        if (type == cellularType) return NO;
+        if (type == wifiType) return true;
+        if (type == cellularType) return false;
     }
-    return SRAOriginalUsesInterfaceType(path, type);
+    return SRAOriginalNWPathUsesInterfaceType(path, type);
 }
 
 void SRAInstallCellularClient(void) {
-    // Only SideStore calls this entry point. Its installed binary contains
-    // CellularRefreshManager's Wi-Fi skip branch and imports this Swift symbol.
-    // No shortcut URL or CoreTelephony data toggle is intercepted anymore.
-    void *symbol = dlsym(RTLD_DEFAULT, SRAWiFiClassificationSymbol + 1);
+    // Only SideStore calls this entry point. It loads Network.framework and
+    // calls nw_path_uses_interface_type through NWPath. The kernel route,
+    // sockets, pairing and cellular-data settings are left untouched.
+    void *symbol = dlsym(RTLD_DEFAULT, "nw_path_uses_interface_type");
     if (!symbol) {
-        os_log_error(SRALog(), "NWPath.usesInterfaceType symbol missing; cellular path left unchanged");
+        os_log_error(SRALog(), "nw_path_uses_interface_type symbol missing; path classification left unchanged");
         return;
     }
-    MSHookFunction(symbol, (void *)SRAUsesInterfaceType,
-                   (void **)&SRAOriginalUsesInterfaceType);
-    os_log(SRALog(), "SideStore NWPath Wi-Fi classification hook installed; cellular shortcuts disabled build=%{public}s",
+    MSHookFunction(symbol, (void *)SRAHookedNWPathUsesInterfaceType,
+                   (void **)&SRAOriginalNWPathUsesInterfaceType);
+    os_log(SRALog(), "SideStore Network.framework C path-classification hook installed; cellular shortcuts disabled build=%{public}s",
            APELIN_BUILD_ID);
 }
